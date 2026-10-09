@@ -13,6 +13,10 @@ TODAY = date(2026, 10, 9)
     ("Matematik SINAVI 20 ekim", True),
     ("kimya sınavım var pazartesi", True),
     ("ödevlerim neler?", False),
+    ("sınavım kötü geçti", False),
+    ("ödevimi bitirdim", False),
+    ("haftaya salı tarih sınavı", True),
+    ("edebiyat ödevi 3 kasım", True),
     ("yarın faturayı hatırlat", False),
     ("bugün ne var", False),
 ])
@@ -62,3 +66,11 @@ def test_format_tasks_empty_and_done():
     assert format_tasks([], TODAY) == "Yaklaşan ödev ya da sınav yok."
     done = format_task({"id": 1, "kind": "odev", "title": "Fizik", "due": TODAY, "done": True}, TODAY)
     assert done.startswith("✅")
+
+
+
+def test_parse_result_not_a_task():
+    from app.tasks import NotATask
+
+    with pytest.raises(NotATask):
+        parse_result({"kind": None}, TODAY)

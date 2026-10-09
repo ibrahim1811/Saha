@@ -132,6 +132,12 @@ class DB:
         )
         return [dict(r) for r in rows]
 
+    async def upcoming_tasks(self, end: date) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, kind, title, due, done FROM tasks WHERE NOT done AND due <= $1 ORDER BY due, id", end
+        )
+        return [dict(r) for r in rows]
+
     async def set_task_done(self, task_id: int, done: bool) -> bool:
         result = await self.pool.execute("UPDATE tasks SET done = $2 WHERE id = $1", task_id, done)
         return result.endswith(" 1")

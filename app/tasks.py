@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 from app.schedule import ALL_DAYS
@@ -7,11 +8,20 @@ SYSTEM = (
     "Kullanıcının yazdığı ödev ya da sınav kaydını ayrıştır. Sadece JSON döndür: "
     '{"kind": "odev" ya da "sinav", "title": "kısa başlık (örn. Fizik ödevi, Matematik sınavı)", "due": "YYYY-MM-DD"}. '
     "'cuma', 'yarın', '20 ekim', 'haftaya salı' gibi ifadeleri verilen bugünün tarihine göre çöz. "
-    "Gün adı verilmişse bugünden sonraki ilk o günü seç."
+    "Gün adı verilmişse bugünden sonraki ilk o günü seç. "
+    'Mesaj yeni bir ödev ya da sınav eklemek değilse (soru, yorum, "bitirdim" gibi) sadece {"kind": null} döndür.'
+)
+DATE_CUE = re.compile(
+    r"\d|yarın|bugün|haftaya|teslim|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar|"
+    r"ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık"
 )
 
 
 class TaskError(ValueError):
+    pass
+
+
+class NotATask(Exception):
     pass
 
 
@@ -23,10 +33,12 @@ def is_task_request(text: str) -> bool:
     t = _normalize(text)
     if t.endswith("?") or "hatırlat" in t:
         return False
-    return "ödev" in t or "sınav" in t
+    return ("ödev" in t or "sınav" in t) and bool(DATE_CUE.search(t))
 
 
 def parse_result(data, today: date) -> tuple[str, str, date]:
+    if isinstance(data, dict) and "kind" in data and data["kind"] is None:
+        raise NotATask
     try:
         kind = data["kind"]
         title = str(data["title"]).strip()

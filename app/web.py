@@ -39,6 +39,8 @@ async def errors(request: web.Request, handler):
         return await handler(request)
     except ApiError as e:
         return _json({"error": e.message}, e.status)
+    except tasks.NotATask:
+        return _json({"error": "Bunu ödev ya da sınav olarak anlayamadım, tarihiyle yazar mısın?"}, 400)
     except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError) as e:
         return _json({"error": str(e)}, 400)
     except web.HTTPException:
@@ -253,8 +255,14 @@ async def send_now(request):
     return _json({"ok": True})
 
 
+async def _no_cache_static(request, response):
+    if request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+
+
 def build_web_app(tg_app) -> web.Application:
     app = web.Application(middlewares=[errors, auth])
+    app.on_response_prepare.append(_no_cache_static)
     app[TG_APP] = tg_app
     app.add_routes([
         web.get("/health", health),

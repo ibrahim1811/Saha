@@ -343,21 +343,24 @@ async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🗑 Silindi." if deleted else "Bu numarada hatırlatıcı yok.")
 
 
-async def _create_task(update: Update, context, message: str) -> None:
+async def _create_task(update: Update, context, message: str) -> bool:
     d = _deps(context)
     today = _now(context).date()
     try:
         kind, title, due = await tasks.parse(message, today, d["llm"])
+    except tasks.NotATask:
+        return False
     except tasks.TaskError as e:
         await update.message.reply_text(f"⚠️ {e}")
-        return
+        return True
     except LLMError:
         log.exception("Ödev/sınav LLM ile ayrıştırılamadı")
         await update.message.reply_text(LLM_DOWN)
-        return
+        return True
     task_id = await d["db"].add_task(kind, title, due)
     item = {"id": task_id, "kind": kind, "title": title, "due": due, "done": False}
     await update.message.reply_text(f"Kaydedildi: {tasks.format_task(item, today)}\nBitince /bitti {task_id} yaz.")
+    return True
 
 
 async def odevler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -379,8 +382,7 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if is_reminder_request(message):
         await _create_reminder(update, context, message)
         return
-    if tasks.is_task_request(message):
-        await _create_task(update, context, message)
+    if tasks.is_task_request(message) and await _create_task(update, context, message):
         return
     d = _deps(context)
     await context.bot.send_chat_action(update.effective_chat.id, "typing")

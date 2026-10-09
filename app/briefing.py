@@ -93,7 +93,7 @@ def make_sources(cfg, db, llm, http, today: date, settings: dict, ref_day: date 
         return format_lessons(await lessons_for(today, db))
 
     async def tasks_section() -> str:
-        items = await db.tasks_due_between(today, today + timedelta(days=7))
+        items = await db.upcoming_tasks(today + timedelta(days=7))
         return tasks.format_tasks(items, ref_day or today)
 
     return Sources(

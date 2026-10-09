@@ -74,3 +74,11 @@ async def test_tasks_crud(db):
     assert len(await db.list_tasks(include_done=True)) == 2
     assert [t["title"] for t in await db.tasks_due_between(date(2026, 10, 11), date(2026, 10, 15))] == ["Fizik"]
     assert await db.delete_task(a) is True and await db.delete_task(a) is False
+
+
+async def test_upcoming_tasks_includes_overdue(db):
+    from datetime import date
+
+    await db.add_task("odev", "Eski", date(2026, 10, 1))
+    await db.add_task("odev", "Uzak", date(2026, 12, 1))
+    assert [t["title"] for t in await db.upcoming_tasks(date(2026, 10, 16))] == ["Eski"]

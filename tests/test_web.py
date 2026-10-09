@@ -277,3 +277,8 @@ async def test_task_past_date_400():
     async with TestClient(TestServer(build_web_app(tg))) as c:
         resp = await c.post("/api/tasks", json={"text": "eski ödev"}, headers=_auth())
         assert resp.status == 400 and "geçmişte" in (await resp.json())["error"]
+
+
+async def test_static_not_cached(client):
+    resp = await client.get("/static/app.js")
+    assert resp.status == 200 and resp.headers["Cache-Control"] == "no-cache"

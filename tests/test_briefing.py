@@ -110,7 +110,19 @@ async def test_tasks_source_relative_to_reference_day():
 
     from app import briefing as bmod
 
-    db = SimpleNamespace(tasks_due_between=AsyncMock(return_value=[{"id": 1, "kind": "odev", "title": "Fizik", "due": date(2026, 10, 10), "done": False}]))
+    db = SimpleNamespace(upcoming_tasks=AsyncMock(return_value=[{"id": 1, "kind": "odev", "title": "Fizik", "due": date(2026, 10, 10), "done": False}]))
     src = bmod.make_sources(SimpleNamespace(), db, None, None, date(2026, 10, 10), _settings(), ref_day=date(2026, 10, 9))
     assert "(yarın)" in await src.tasks()
-    assert db.tasks_due_between.await_args.args == (date(2026, 10, 10), date(2026, 10, 17))
+    assert db.upcoming_tasks.await_args.args == (date(2026, 10, 17),)
+
+
+async def test_tasks_source_includes_overdue():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app import briefing as bmod
+
+    db = SimpleNamespace(upcoming_tasks=AsyncMock(return_value=[{"id": 1, "kind": "odev", "title": "Eski", "due": date(2026, 10, 7), "done": False}]))
+    src = bmod.make_sources(SimpleNamespace(), db, None, None, date(2026, 10, 9), _settings())
+    assert "2 gün geçti" in await src.tasks()
+    assert db.upcoming_tasks.await_args.args == (date(2026, 10, 16),)

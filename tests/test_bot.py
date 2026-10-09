@@ -368,3 +368,13 @@ async def test_bitti_marks_done():
     ctx.bot_data["db"] = SimpleNamespace(set_task_done=AsyncMock(return_value=True))
     await botmod.bitti(update, ctx)
     ctx.bot_data["db"].set_task_done.assert_awaited_once_with(7, True)
+
+
+async def test_text_task_cue_but_not_a_task_goes_to_chat():
+    llm = FakeLLM(reply='{"kind": null}')
+    update = _msg_update("yarın sınavım var mı")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_task=AsyncMock(), recent_notes=AsyncMock(return_value=[]), all_schedules=AsyncMock(return_value={}))
+    await botmod.text(update, ctx)
+    ctx.bot_data["db"].add_task.assert_not_awaited()
+    assert len(llm.calls) == 2
