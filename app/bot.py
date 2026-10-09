@@ -49,7 +49,9 @@ NOTE_PROMPT = (
 SOLVE_OCR_PROMPT = "Bu bir sınav sorusu fotoğrafı. Soruyu ve varsa şıkları eksiksiz metin olarak aynen yaz. Sadece soruyu yaz, çözme."
 SOLVE_SYSTEM = (
     "Sen bir YKS (TYT/AYT) öğretmenisin. Soruyu Türkçe, adım adım ve kısa çöz. "
-    "Gereksiz uzatma; her adımda ne yaptığını bir cümleyle söyle. En sonda ayrı satırda 'Cevap: X' yaz."
+    "Gereksiz uzatma; her adımda ne yaptığını bir cümleyle söyle. En sonda ayrı satırda 'Cevap: X' yaz. "
+    "Cevap Telegram'da düz metin olarak görünecek: LaTeX, \\( \\), **, # gibi işaretler kullanma; "
+    "matematiği düz yaz (3x + 5 = 26, x = 7, 7/2 = 3,5), adımları 1., 2., 3. diye numarala."
 )
 KIND_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("🏫 Okul (hafta içi)", callback_data="kind:okul:")],
