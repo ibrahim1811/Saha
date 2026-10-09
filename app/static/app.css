@@ -178,10 +178,35 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
 .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .badge.soon { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
 
+.yks {
+  margin: 0 -16px 8px; padding: 26px 20px 22px; border-radius: 0 0 28px 28px;
+  background: linear-gradient(160deg, #1f2a6b, #6a3fb5 60%, #c4508f); color: #fff;
+}
+.yks-days { margin: 0; font-size: 72px; line-height: 1; font-weight: 800; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.yks-label { margin: 6px 0 0; opacity: .85; }
+.exam-chart { display: block; width: 100%; height: 140px; margin: 12px 0 4px; }
+.exam-chart .grid { stroke: var(--line); stroke-width: 1; }
+.exam-chart .tyt { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.exam-chart .ayt { fill: none; stroke: #c4508f; stroke-width: 2.5; stroke-linejoin: round; }
+.exam-chart .target { stroke: var(--hint); stroke-dasharray: 4 4; }
+.exam-chart text { fill: var(--hint); font-size: 10px; font-family: inherit; }
+.exam-summary { white-space: pre-wrap; font: inherit; font-size: 14px; margin: 4px 0 12px; color: var(--hint); }
+.overall { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 0 6px; }
+.overall strong { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.meter { padding: 10px 0 4px; }
+.meter-head { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 6px; }
+.meter-bar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--hint) 20%, transparent); overflow: hidden; }
+.meter-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: inherit; }
+.meter-bar i.warn { background: var(--danger); }
+.abs-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; }
+.abs-form input[type="date"] { flex: 1 1 140px; border: 0; background: color-mix(in srgb, var(--hint) 10%, transparent); border-radius: 10px; padding: 9px 10px; }
+.mini { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.row input.num, .row input[type="date"] { border: 0; background: none; text-align: right; font-weight: 600; font-size: 16px; color: var(--accent); width: 130px; }
+
 .foot { color: var(--hint); font-size: 13px; margin: 8px 4px 0; }
 
 .tabs {
-  position: fixed; inset: auto 0 0 0; display: grid; grid-template-columns: repeat(4, 1fr);
+  position: fixed; inset: auto 0 0 0; display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
   padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
 }
@@ -206,3 +231,7 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+.link-del { appearance: none; border: 0; background: none; color: var(--hint); cursor: pointer; padding: 0 2px; font-size: 15px; }
+.link-del:hover { color: var(--danger); }
+.exam-chart circle.tyt { fill: var(--accent); stroke: none; }
+.exam-chart circle.ayt { fill: #c4508f; stroke: none; }

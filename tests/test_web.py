@@ -292,3 +292,78 @@ async def test_llm_down_returns_503():
     async with TestClient(TestServer(build_web_app(tg))) as c:
         resp = await c.post("/api/tasks", json={"text": "fizik ödevi cuma"}, headers=_auth())
         assert resp.status == 503 and "ulaşamıyorum" in (await resp.json())["error"]
+
+
+class SchoolStore(TaskStore):
+    def __init__(self):
+        super().__init__()
+        self.grades, self.absences, self.exams = {}, {}, {}
+
+    async def get_schedule(self, kind, day=""):
+        return {"pazartesi": [{"saat": "", "ders": "Fizik"}, {"saat": "", "ders": "Fizik"}]} if kind == "okul" else None
+
+    async def list_grades(self):
+        return [{"id": k, **v} for k, v in self.grades.items()]
+
+    async def add_grade(self, subject, label, score):
+        gid = len(self.grades) + 1
+        self.grades[gid] = {"subject": subject, "label": label, "score": score}
+        return gid
+
+    async def delete_grade(self, gid):
+        return self.grades.pop(gid, None) is not None
+
+    async def list_absences(self):
+        return [{"id": k, **v} for k, v in self.absences.items()]
+
+    async def add_absence(self, day, excused, half):
+        aid = len(self.absences) + 1
+        self.absences[aid] = {"day": day, "excused": excused, "half": half}
+        return aid
+
+    async def delete_absence(self, aid):
+        return self.absences.pop(aid, None) is not None
+
+    async def list_exams(self):
+        return [{"id": k, **v} for k, v in self.exams.items()]
+
+    async def add_exam(self, kind, total, details, taken):
+        eid = len(self.exams) + 1
+        self.exams[eid] = {"kind": kind, "total": total, "details": details, "taken": taken}
+        return eid
+
+    async def delete_exam(self, eid):
+        return self.exams.pop(eid, None) is not None
+
+
+async def test_school_overview_and_crud():
+    from datetime import date as _date
+
+    tg = _tg(FakeLLM(reply='{"subject": "Fizik", "label": "1. yazılı", "score": 80}'))
+    tg.bot_data["db"] = SchoolStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        assert (await c.post("/api/grades", json={"text": "fizik 1. yazılı 80"}, headers=_auth())).status == 200
+        tg.bot_data["llm"] = FakeLLM(reply='{"kind": "TYT", "total": 70, "details": {}}')
+        assert (await c.post("/api/exams", json={"text": "tyt 70 net"}, headers=_auth())).status == 200
+        resp = await c.post("/api/absences", json={"day": "2026-10-01", "excused": False, "half": True}, headers=_auth())
+        assert resp.status == 200
+        data = await (await c.get("/api/school", headers=_auth())).json()
+        assert data["grades"]["subjects"][0]["subject"] == "Fizik" and data["grades"]["subjects"][0]["hours"] == 2
+        assert data["grades"]["overall"] == 80
+        assert data["absences"]["totals"]["unexcused"] == 0.5 and data["absences"]["limits"] == {"unexcused": 10, "total": 30}
+        assert data["exams"][0]["total"] == 70 and data["summaries"]["TYT"].startswith("TYT")
+        assert data["yks"]["date"] == "2027-06-19" and data["yks"]["estimated"] is True and data["yks"]["days_left"] > 0
+        assert all(_date.fromisoformat(e["end"]) >= _date.today() for e in data["calendar"])
+        assert (await c.delete("/api/grades/1", headers=_auth())).status == 200
+        assert (await c.delete("/api/exams/1", headers=_auth())).status == 200
+        assert (await c.delete("/api/absences/1", headers=_auth())).status == 200
+        assert (await c.delete("/api/absences/1", headers=_auth())).status == 404
+
+
+async def test_school_bad_inputs():
+    tg = _tg(FakeLLM(reply='{"subject": null}'))
+    tg.bot_data["db"] = SchoolStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        assert (await c.post("/api/grades", json={"text": "merhaba"}, headers=_auth())).status == 400
+        assert (await c.post("/api/absences", json={"day": "2099-01-01", "excused": False, "half": False}, headers=_auth())).status == 400
+        assert (await c.post("/api/absences", json={"day": "dün", "excused": False, "half": False}, headers=_auth())).status == 400

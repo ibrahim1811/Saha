@@ -98,6 +98,7 @@
     if (name === "program") loadProgram().catch(fail);
     if (name === "notes") loadNotes().catch(fail);
     if (name === "today") loadToday().catch(fail);
+    if (name === "school") loadSchool().catch(fail);
   }
 
   function skyLine(hourly) {
@@ -220,6 +221,11 @@
     const s = state.settingsDraft;
     $("set-time").value = s.briefing_time;
     $("set-photo").checked = s.photo_card;
+    $("set-yks").value = s.yks_date;
+    $("set-yks-est").checked = s.yks_estimated;
+    $("set-target-tyt").value = s.target_tyt ?? "";
+    $("set-target-ayt").value = s.target_ayt ?? "";
+    $("set-alerts").checked = s.weather_alerts;
     $("set-evening").checked = s.evening_enabled;
     $("set-evening-time").value = s.evening_time;
     $("set-evening-time").disabled = !s.evening_enabled;
@@ -335,6 +341,100 @@
     $("tasks-toggle-done").textContent = state.showDone ? "Tamamlananları gizle" : "Tamamlananları göster";
   }
 
+  const fmtNum = (v) => (v === null || v === undefined ? "–" : String(Math.round(v * 100) / 100).replace(".", ","));
+
+  function examChart(exams, targets) {
+    const svg = $("exam-chart");
+    if (!exams.length) {
+      svg.innerHTML = '<text x="160" y="74" text-anchor="middle">Henüz deneme yok</text>';
+      return;
+    }
+    const W = 320, H = 140, L = 28, R = 8, T = 10, B = 22;
+    const max = { TYT: 120, AYT: 120 };
+    const scaleY = (v, kind) => T + (H - T - B) * (1 - v / max[kind]);
+    const sorted = [...exams].sort((a, b) => (a.taken < b.taken ? -1 : 1));
+    const xs = (i, n) => (n === 1 ? (L + W - R) / 2 : L + ((W - L - R) * i) / (n - 1));
+    let out = "";
+    for (const v of [0, 0.5, 1]) {
+      const y = T + (H - T - B) * (1 - v);
+      out += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text x="2" y="${y + 3}">${Math.round(120 * v)}</text>`;
+    }
+    for (const kind of ["TYT", "AYT"]) {
+      const items = sorted.filter((e) => e.kind === kind);
+      if (targets[kind]) {
+        const y = scaleY(targets[kind], kind).toFixed(1);
+        out += `<line class="target" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/>`;
+      }
+      if (!items.length) continue;
+      const pts = items.map((e, i) => `${xs(i, items.length).toFixed(1)},${scaleY(e.total, kind).toFixed(1)}`);
+      out += `<polyline class="${kind.toLowerCase()}" points="${pts.join(" ")}"/>`;
+      pts.forEach((p) => {
+        const [x, y] = p.split(",");
+        out += `<circle cx="${x}" cy="${y}" r="3" class="${kind.toLowerCase()}"/>`;
+      });
+      const last = items[items.length - 1];
+      out += `<text x="${W - R}" y="${(scaleY(last.total, kind) - 6).toFixed(1)}" text-anchor="end">${kind} ${fmtNum(last.total)}</text>`;
+    }
+    svg.innerHTML = out;
+  }
+
+  async function loadSchool() {
+    const d = await api("GET", "/api/school");
+    $("yks-days").textContent = d.yks.days_left >= 0 ? `${d.yks.days_left} gün` : "Bitti";
+    const yksDate = new Date(d.yks.date + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric", timeZone: TZ });
+    $("yks-label").textContent = `YKS'ye kaldı (${d.yks.estimated ? "tahmini " : ""}${yksDate})`;
+
+    examChart(d.exams, d.targets);
+    $("exam-summary").textContent = [d.summaries.TYT, d.summaries.AYT].filter(Boolean).join("\n") || "Deneme ekledikçe burada gelişimini göreceksin.";
+    $("exam-list").innerHTML = d.exams.length
+      ? [...d.exams].reverse().slice(0, 6).map((e) => `<div class="item"><span class="badge">${esc(e.kind)}</span><div class="item-main"><p class="item-title">${fmtNum(e.total)} net</p><p class="item-sub">${esc(new Date(e.taken + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", timeZone: TZ }))}</p></div><button class="icon-btn" data-exam-del="${e.id}" aria-label="Sil">${TRASH}</button></div>`).join("")
+      : '<p class="empty">Henüz deneme yok.</p>';
+
+    $("grade-overall").textContent = fmtNum(d.grades.overall);
+    $("grade-list").innerHTML = d.grades.subjects.length
+      ? d.grades.subjects.map((s) => `<div class="item"><div class="item-main"><p class="item-title">${esc(s.subject)}</p><p class="item-sub">${s.items.map((i) => `${esc(i.label)}: ${fmtNum(i.score)} <button class="link-del" data-grade-del="${i.id}" aria-label="Notu sil">×</button>`).join(" · ")}</p></div><span class="badge">${fmtNum(s.average)}</span></div>`).join("")
+      : '<p class="empty">Henüz not yok. Aşağıya "fizik 1. yazılı 85" gibi yazabilirsin.</p>';
+
+    const t = d.absences.totals;
+    const lim = d.absences.limits;
+    $("abs-unexcused").textContent = `${fmtNum(t.unexcused)}/${lim.unexcused} gün`;
+    $("abs-total").textContent = `${fmtNum(t.total)}/${lim.total} gün`;
+    const bar = (id, v, max) => {
+      const el = $(id);
+      el.style.width = Math.min(100, (v / max) * 100) + "%";
+      el.classList.toggle("warn", v / max >= 0.8);
+    };
+    bar("abs-unexcused-bar", t.unexcused, lim.unexcused);
+    bar("abs-total-bar", t.total, lim.total);
+    $("abs-list").innerHTML = d.absences.rows.slice(0, 8).map((r) => `<div class="item"><div class="item-main"><p class="item-title">${esc(new Date(r.day + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "long", timeZone: TZ }))}</p><p class="item-sub">${r.excused ? "Özürlü" : "Özürsüz"}${r.half ? ", yarım gün" : ""}</p></div><button class="icon-btn" data-abs-del="${r.id}" aria-label="Sil">${TRASH}</button></div>`).join("");
+    if (!$("abs-day").value) $("abs-day").value = new Date().toLocaleDateString("sv-SE", { timeZone: TZ });
+
+    $("calendar-list").innerHTML = (d.holiday ? `<div class="item"><div class="item-main"><p class="item-title">🏖 Bugün ${esc(d.holiday)}</p></div></div>` : "") +
+      d.calendar.map((e) => {
+        const range = e.start === e.end ? fmtDate(e.start + "T12:00:00+03:00") : `${fmtDate(e.start + "T12:00:00+03:00")} – ${fmtDate(e.end + "T12:00:00+03:00")}`;
+        const label = e.days > 0 ? `${e.days} gün sonra` : "şu an";
+        return `<div class="item"><div class="item-main"><p class="item-title">${esc(e.name)}</p><p class="item-sub">${esc(range)}</p></div><span class="badge${e.days <= 7 ? " soon" : ""}">${label}</span></div>`;
+      }).join("");
+  }
+
+  async function postText(path, inputId, okText) {
+    const input = $(inputId);
+    const text = input.value.trim();
+    if (!text) return;
+    input.disabled = true;
+    try {
+      await api("POST", path, { text });
+      input.value = "";
+      haptic("success");
+      toast(okText);
+      await loadSchool();
+    } catch (err) {
+      fail(err);
+    } finally {
+      input.disabled = false;
+    }
+  }
+
   async function loadReminders() {
     $("reminders").innerHTML = reminderItems(await api("GET", "/api/reminders"));
   }
@@ -356,6 +456,56 @@
     $("set-time").addEventListener("change", (e) => {
       if (e.target.value) state.settingsDraft.briefing_time = e.target.value;
       renderSettings();
+    });
+    $("set-yks").addEventListener("change", (e) => {
+      if (e.target.value) state.settingsDraft.yks_date = e.target.value;
+      renderSettings();
+    });
+    $("set-yks-est").addEventListener("change", (e) => {
+      state.settingsDraft.yks_estimated = e.target.checked;
+      renderSettings();
+    });
+    for (const [id, key] of [["set-target-tyt", "target_tyt"], ["set-target-ayt", "target_ayt"]]) {
+      $(id).addEventListener("change", (e) => {
+        const v = e.target.value === "" ? null : Number(e.target.value);
+        state.settingsDraft[key] = Number.isFinite(v) && v > 0 ? v : null;
+        renderSettings();
+      });
+    }
+    $("set-alerts").addEventListener("change", (e) => {
+      state.settingsDraft.weather_alerts = e.target.checked;
+      renderSettings();
+    });
+    $("exam-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      postText("/api/exams", "exam-input", "Deneme kaydedildi");
+    });
+    $("grade-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      postText("/api/grades", "grade-input", "Not kaydedildi");
+    });
+    $("abs-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      try {
+        await api("POST", "/api/absences", { day: $("abs-day").value, excused: $("abs-excused").checked, half: $("abs-half").checked });
+        haptic("success");
+        toast("Devamsızlık kaydedildi");
+        await loadSchool();
+      } catch (err) {
+        fail(err);
+      }
+    });
+    $("view-school").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-exam-del], [data-grade-del], [data-abs-del]");
+      if (!b || !(await confirmAsk("Bu kayıt silinsin mi?"))) return;
+      const path = b.dataset.examDel ? "/api/exams/" + b.dataset.examDel : b.dataset.gradeDel ? "/api/grades/" + b.dataset.gradeDel : "/api/absences/" + b.dataset.absDel;
+      try {
+        await api("DELETE", path);
+        toast("Silindi");
+        await loadSchool();
+      } catch (err) {
+        fail(err);
+      }
     });
     $("set-evening").addEventListener("change", (e) => {
       state.settingsDraft.evening_enabled = e.target.checked;
@@ -524,7 +674,7 @@
     }
     bind();
     const initial = new URLSearchParams(location.search).get("view");
-    showView(["today", "program", "notes", "settings"].includes(initial) ? initial : "today");
+    showView(["today", "program", "notes", "school", "settings"].includes(initial) ? initial : "today");
   }
 
   start();

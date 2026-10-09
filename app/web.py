@@ -9,7 +9,9 @@ from aiohttp import web
 
 from dataclasses import asdict
 
-from app import bot, card, reminders, schedule, settings, tasks, weather
+from datetime import date
+
+from app import bot, calendar_tr, card, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
@@ -43,9 +45,11 @@ async def errors(request: web.Request, handler):
     except LLMError:
         log.exception("Panel isteğinde LLM hatası: %s %s", request.method, request.path)
         return _json({"error": "Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener misin?"}, 503)
+    except school.NotThis:
+        return _json({"error": "Bunu anlayamadım, örneğe benzer şekilde yazar mısın?"}, 400)
     except tasks.NotATask:
         return _json({"error": "Bunu ödev ya da sınav olarak anlayamadım, tarihiyle yazar mısın?"}, 400)
-    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError) as e:
+    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError, school.SchoolError) as e:
         return _json({"error": str(e)}, 400)
     except web.HTTPException:
         raise
@@ -238,6 +242,69 @@ async def delete_task(request):
     return _json({"ok": True})
 
 
+async def get_school(request):
+    d = _data(request)
+    db = d["db"]
+    s = await bot.load_settings(d)
+    today = _now(d["cfg"].tz).date()
+    yks = date.fromisoformat(s["yks_date"])
+    subjects, overall = school.averages(await db.list_grades(), school.subject_hours(await db.get_schedule("okul", "")))
+    rows = await db.list_absences()
+    exams = await db.list_exams()
+    return _json({
+        "yks": {"date": yks, "estimated": s["yks_estimated"], "days_left": (yks - today).days},
+        "holiday": calendar_tr.holiday_on(today),
+        "calendar": [{"start": a, "end": b, "name": n, "days": (a - today).days} for a, b, n in calendar_tr.EVENTS if b >= today],
+        "grades": {"subjects": subjects, "overall": overall},
+        "absences": {"rows": rows, "totals": school.absence_totals(rows),
+                     "limits": {"unexcused": school.UNEXCUSED_LIMIT, "total": school.TOTAL_LIMIT}},
+        "exams": exams,
+        "summaries": {k: school.exam_summary(exams, k, s.get(f"target_{k.lower()}")) for k in ("TYT", "AYT")},
+        "targets": {"TYT": s.get("target_tyt"), "AYT": s.get("target_ayt")},
+    })
+
+
+async def _text_body(request) -> str:
+    text = str((await _body(request)).get("text", "")).strip()
+    if not text:
+        raise ApiError(400, "Metin boş")
+    return text
+
+
+async def post_grade(request):
+    d = _data(request)
+    subject, label, score = await school.parse_grade(await _text_body(request), d["llm"])
+    gid = await d["db"].add_grade(subject, label, score)
+    return _json({"id": gid, "subject": subject, "label": label, "score": score})
+
+
+async def post_exam(request):
+    d = _data(request)
+    kind, total, details = await school.parse_exam(await _text_body(request), d["llm"])
+    taken = _now(d["cfg"].tz).date()
+    eid = await d["db"].add_exam(kind, total, details, taken)
+    return _json({"id": eid, "kind": kind, "total": total, "details": details, "taken": taken})
+
+
+async def post_absence(request):
+    d = _data(request)
+    body = await _body(request)
+    day, excused, half = school.parse_absence_result(
+        {"day": body.get("day") or "x", "excused": body.get("excused") is True, "half": body.get("half") is True},
+        _now(d["cfg"].tz).date(),
+    )
+    aid = await d["db"].add_absence(day, excused, half)
+    return _json({"id": aid, "day": day, "excused": excused, "half": half})
+
+
+def _deleter(method: str, label: str):
+    async def handler(request):
+        if not await getattr(_data(request)["db"], method)(_int(request, "id")):
+            raise ApiError(404, f"{label} bulunamadı")
+        return _json({"ok": True})
+    return handler
+
+
 async def preview(request):
     d = _data(request)
     today = await _next_day(d)
@@ -290,6 +357,13 @@ def build_web_app(tg_app) -> web.Application:
         web.post("/api/tasks", post_task),
         web.patch("/api/tasks/{id}", patch_task),
         web.delete("/api/tasks/{id}", delete_task),
+        web.get("/api/school", get_school),
+        web.post("/api/grades", post_grade),
+        web.delete("/api/grades/{id}", _deleter("delete_grade", "Not")),
+        web.post("/api/exams", post_exam),
+        web.delete("/api/exams/{id}", _deleter("delete_exam", "Deneme")),
+        web.post("/api/absences", post_absence),
+        web.delete("/api/absences/{id}", _deleter("delete_absence", "Devamsızlık")),
         web.get("/api/briefing/preview", preview),
         web.post("/api/briefing/send", send_now),
     ])

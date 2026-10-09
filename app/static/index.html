@@ -95,6 +95,50 @@
       <div class="block" id="notes"></div>
     </section>
 
+    <section class="view" id="view-school" data-title="Okul" hidden>
+      <header class="yks">
+        <p class="yks-days" id="yks-days">–</p>
+        <p class="yks-label" id="yks-label">YKS'ye kalan gün</p>
+      </header>
+
+      <h2 class="group">Deneme netleri</h2>
+      <div class="block">
+        <svg class="exam-chart" id="exam-chart" viewBox="0 0 320 140" role="img" aria-label="Deneme netleri grafiği"></svg>
+        <pre class="exam-summary" id="exam-summary"></pre>
+      </div>
+      <form class="block compose" id="exam-form">
+        <input id="exam-input" type="text" autocomplete="off" placeholder="tyt deneme 78 net" aria-label="Yeni deneme neti">
+        <button class="btn btn-primary" type="submit">Ekle</button>
+      </form>
+      <div class="block" id="exam-list"></div>
+
+      <h2 class="group">Ders notları</h2>
+      <div class="block">
+        <div class="overall"><span>Ağırlıklı ortalama</span><strong id="grade-overall">–</strong></div>
+        <div id="grade-list"></div>
+      </div>
+      <form class="block compose" id="grade-form">
+        <input id="grade-input" type="text" autocomplete="off" placeholder="fizik 1. yazılı 85" aria-label="Yeni not">
+        <button class="btn btn-primary" type="submit">Ekle</button>
+      </form>
+
+      <h2 class="group">Devamsızlık</h2>
+      <div class="block">
+        <div class="meter"><div class="meter-head"><span>Özürsüz</span><span id="abs-unexcused">0/10</span></div><div class="meter-bar"><i id="abs-unexcused-bar"></i></div></div>
+        <div class="meter"><div class="meter-head"><span>Toplam</span><span id="abs-total">0/30</span></div><div class="meter-bar"><i id="abs-total-bar"></i></div></div>
+        <div id="abs-list"></div>
+      </div>
+      <form class="block abs-form" id="abs-form">
+        <input type="date" id="abs-day" required aria-label="Gün">
+        <label class="mini"><input type="checkbox" class="check" id="abs-excused"> Özürlü</label>
+        <label class="mini"><input type="checkbox" class="check" id="abs-half"> Yarım gün</label>
+        <button class="btn btn-primary" type="submit">Ekle</button>
+      </form>
+
+      <h2 class="group">Okul takvimi</h2>
+      <div class="block" id="calendar-list"></div>
+    </section>
+
     <section class="view" id="view-settings" data-title="Ayarlar" hidden>
       <h2 class="group">Sabah özeti</h2>
       <div class="block">
@@ -106,6 +150,15 @@
           <span>Hava kartı görseli</span>
           <input type="checkbox" class="switch" id="set-photo">
         </label>
+      </div>
+
+      <h2 class="group">YKS ve uyarılar</h2>
+      <div class="block">
+        <label class="row"><span>YKS tarihi</span><input type="date" id="set-yks" required></label>
+        <label class="row"><span>Tarih henüz tahmini</span><input type="checkbox" class="switch" id="set-yks-est"></label>
+        <label class="row"><span>TYT hedef net</span><input type="number" class="num" id="set-target-tyt" min="1" max="120" step="0.25" placeholder="–"></label>
+        <label class="row"><span>AYT hedef net</span><input type="number" class="num" id="set-target-ayt" min="1" max="80" step="0.25" placeholder="–"></label>
+        <label class="row"><span>Gün içi hava uyarıları</span><input type="checkbox" class="switch" id="set-alerts"></label>
       </div>
 
       <h2 class="group">Akşam özeti</h2>
@@ -123,6 +176,7 @@
 
       <h2 class="group">Sabah özetinde neler olsun</h2>
       <div class="block">
+        <label class="row"><span>YKS geri sayım ve okul takvimi</span><input type="checkbox" class="switch" data-section="school"></label>
         <label class="row"><span>Hava ve kıyafet önerisi</span><input type="checkbox" class="switch" data-section="weather"></label>
         <label class="row"><span>Bugünün dersleri</span><input type="checkbox" class="switch" data-section="lessons"></label>
         <label class="row"><span>Ödev ve sınavlar</span><input type="checkbox" class="switch" data-section="tasks"></label>
@@ -150,10 +204,11 @@
     <button data-view="today" aria-current="page"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>Bugün</button>
     <button data-view="program"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="3"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4"/></svg>Program</button>
     <button data-view="notes"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5v4.5H19M9 12.5h7M9 16h5"/></svg>Notlar</button>
+    <button data-view="school"><svg viewBox="0 0 24 24"><path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.5V16c0 1.5 2.5 3 5.5 3s5.5-1.5 5.5-3v-4.5M21.5 9.5V15"/></svg>Okul</button>
     <button data-view="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>Ayarlar</button>
   </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>
