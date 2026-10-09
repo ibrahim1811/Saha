@@ -10,7 +10,10 @@ Saha (@Saha_habercisi_bot) — Kayra'nın kişisel Telegram asistanı: sabah öz
 | `GROQ_API_KEY` | console.groq.com → API Keys (LLM + ses için tek anahtar) |
 | `DATABASE_URL` | neon.tech → ücretsiz proje → Connection string |
 
-Anahtarsız kullanılan servisler: Open-Meteo (hava), Truncgil (döviz/altın), BBC Türkçe RSS (haber).
+## Panel (Telegram Mini App)
+Botta sol alttaki **Panel** düğmesi ya da `/panel` komutu paneli Telegram içinde açar: bugün, ders programı, notlar/hatırlatıcılar, ayarlar. Panel yalnızca `OWNER_ID`'ye açıktır (Telegram imzası doğrulanır). Adres Render'da `RENDER_EXTERNAL_URL`'den otomatik alınır; başka bir yerde çalıştırırsan `PUBLIC_URL` ver.
+
+Anahtarsız kullanılan servisler: Open-Meteo (hava; 429 verirse MET Norway yedeği), Truncgil (döviz/altın), BBC Türkçe RSS (haber).
 
 xAI Grok kullanmak istersen: `LLM_API_KEY=<xai anahtarı>`, `LLM_BASE_URL=https://api.x.ai/v1`, `LLM_MODEL` ve `LLM_VISION_MODEL` için Grok model adları. Sesli not yine `GROQ_API_KEY` ister.
 

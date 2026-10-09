@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
 from telegram.ext import (
     Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
     TypeHandler, filters,
@@ -24,6 +24,7 @@ HELP = (
     "🎤 Sesli mesaj at → nota çeviririm\n"
     "⏰ \"yarın 15'te faturayı hatırlat\" yaz → hatırlatırım\n"
     "💬 Başka bir şey yaz → notlarına ve programına bakarak cevaplarım\n\n"
+    "/panel ayarlar ve program paneli\n"
     "/ozet sabah özetini şimdi gönder\n"
     "/program kayıtlı programlar\n"
     "/notlar son notlar\n"
@@ -61,8 +62,35 @@ async def gate(update, context) -> None:
         raise ApplicationHandlerStop
 
 
+COMMANDS = [
+    BotCommand("panel", "Paneli aç"),
+    BotCommand("ozet", "Sabah özetini şimdi gönder"),
+    BotCommand("program", "Kayıtlı ders programları"),
+    BotCommand("notlar", "Son notlar"),
+    BotCommand("hatirlaticilar", "Bekleyen hatırlatıcılar"),
+]
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(HELP)
+
+
+async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    url = _deps(context)["cfg"].public_url
+    if not url:
+        await update.message.reply_text("Panel adresi ayarlı değil (PUBLIC_URL). Render'da otomatik gelir.")
+        return
+    markup = InlineKeyboardMarkup([[InlineKeyboardButton("Paneli aç", web_app=WebAppInfo(url=f"{url}/"))]])
+    await update.message.reply_text("Saha paneli 👇", reply_markup=markup)
+
+
+async def setup_menu(app: Application) -> None:
+    cfg = app.bot_data["cfg"]
+    await app.bot.set_my_commands(COMMANDS)
+    if cfg.public_url:
+        await app.bot.set_chat_menu_button(
+            chat_id=cfg.owner_id, menu_button=MenuButtonWebApp(text="Panel", web_app=WebAppInfo(url=f"{cfg.public_url}/"))
+        )
 
 
 async def load_settings(bot_data) -> dict:
@@ -271,6 +299,7 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 def register(app: Application) -> None:
     app.add_handler(TypeHandler(Update, gate), group=-1)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("panel", panel))
     app.add_handler(CommandHandler("ozet", ozet))
     app.add_handler(CommandHandler("program", program))
     app.add_handler(CommandHandler("notlar", notlar))

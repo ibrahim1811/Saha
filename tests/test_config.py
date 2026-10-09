@@ -47,3 +47,9 @@ def test_missing_vars_listed():
     with pytest.raises(RuntimeError) as e:
         load({"TELEGRAM_TOKEN": "t"})
     assert "OWNER_ID" in str(e.value) and "GROQ_API_KEY" in str(e.value)
+
+
+def test_public_url_priority():
+    assert load(BASE).public_url is None
+    assert load({**BASE, "RENDER_EXTERNAL_URL": "https://saha.onrender.com"}).public_url == "https://saha.onrender.com"
+    assert load({**BASE, "RENDER_EXTERNAL_URL": "https://x", "PUBLIC_URL": "https://panel.example/"}).public_url == "https://panel.example"

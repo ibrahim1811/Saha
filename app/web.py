@@ -7,7 +7,9 @@ from types import SimpleNamespace
 
 from aiohttp import web
 
-from app import bot, card, reminders, schedule, settings
+from dataclasses import asdict
+
+from app import bot, card, reminders, schedule, settings, weather
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
 
@@ -104,6 +106,12 @@ async def status(request):
         "settings": await bot.load_settings(d),
         "reminder_count": len(pending),
     })
+
+
+async def get_weather(request):
+    d = _data(request)
+    w = await weather.fetch(d["cfg"].lat, d["cfg"].lon, d["cfg"].tz.key, d["http"])
+    return _json({**asdict(w), "label": weather.CONDITION_TR.get(w.condition, "")})
 
 
 async def get_settings(request):
@@ -207,6 +215,7 @@ def build_web_app(tg_app) -> web.Application:
         web.get("/", index),
         web.static("/static", STATIC),
         web.get("/api/status", status),
+        web.get("/api/weather", get_weather),
         web.get("/api/settings", get_settings),
         web.put("/api/settings", put_settings),
         web.get("/api/schedules", get_schedules),

@@ -129,3 +129,20 @@ def test_reschedule_replaces_job():
     botmod.reschedule_briefing(app.job_queue, "08:15", TZ)
     jobs = app.job_queue.get_jobs_by_name("sabah-ozeti")
     assert len(jobs) == 1 and jobs[0].data == "08:15"
+
+
+async def test_panel_command_sends_webapp_button():
+    update = _msg_update("/panel")
+    ctx = _msg_ctx(None)
+    ctx.bot_data["cfg"].public_url = "https://saha.onrender.com"
+    await botmod.panel(update, ctx)
+    markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].web_app.url == "https://saha.onrender.com/"
+
+
+async def test_panel_command_without_url():
+    update = _msg_update("/panel")
+    ctx = _msg_ctx(None)
+    ctx.bot_data["cfg"].public_url = None
+    await botmod.panel(update, ctx)
+    assert "adres" in update.message.reply_text.await_args.args[0]

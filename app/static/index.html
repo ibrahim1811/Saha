@@ -1,1 +1,134 @@
-<!doctype html><script src="https://telegram.org/js/telegram-web-app.js"></script>
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Saha</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <main id="app">
+    <section class="view" id="view-today" data-title="Bugün">
+      <header class="sky" id="sky" data-cond="">
+        <p class="sky-date" id="sky-date"></p>
+        <div class="sky-row">
+          <p class="sky-temp" id="sky-temp">–</p>
+          <div class="sky-meta">
+            <p class="sky-cond" id="sky-cond">Hava yükleniyor</p>
+            <p class="sky-range" id="sky-range"></p>
+          </div>
+        </div>
+        <svg class="sky-line" id="sky-line" viewBox="0 0 360 64" preserveAspectRatio="none" aria-hidden="true"></svg>
+      </header>
+
+      <div class="block">
+        <div class="next">
+          <div>
+            <p class="next-label">Sıradaki sabah özeti</p>
+            <p class="next-time" id="next-time">–</p>
+          </div>
+          <span class="next-left" id="next-left"></span>
+        </div>
+        <div class="actions">
+          <button class="btn" id="btn-preview">Önizle</button>
+          <button class="btn btn-primary" id="btn-send">Şimdi gönder</button>
+        </div>
+      </div>
+
+      <div class="block" id="preview" hidden>
+        <img class="preview-card" id="preview-card" alt="Bugünün hava kartı" hidden>
+        <pre class="preview-text" id="preview-text"></pre>
+      </div>
+
+      <h2 class="group">Bugünün dersleri</h2>
+      <div class="block" id="today-lessons"></div>
+
+      <h2 class="group">Son sorunlar</h2>
+      <div class="block" id="errors"></div>
+      <p class="foot" id="uptime"></p>
+    </section>
+
+    <section class="view" id="view-program" data-title="Program" hidden>
+      <div class="segments" role="tablist" id="prog-kind">
+        <button role="tab" data-kind="okul" aria-selected="true">Okul</button>
+        <button role="tab" data-kind="cumartesi">Cumartesi</button>
+        <button role="tab" data-kind="pazar">Pazar</button>
+      </div>
+      <div class="days" id="prog-days">
+        <button data-day="pazartesi" aria-pressed="true">Pzt</button>
+        <button data-day="salı">Sal</button>
+        <button data-day="çarşamba">Çar</button>
+        <button data-day="perşembe">Per</button>
+        <button data-day="cuma">Cum</button>
+      </div>
+      <div class="block" id="lessons"></div>
+      <button class="btn btn-wide" id="add-lesson">Ders ekle</button>
+      <button class="link-danger" id="clear-program">Bu programı sil</button>
+      <p class="foot">Fotoğraftan okumak için bota programın fotoğrafını atabilirsin.</p>
+    </section>
+
+    <section class="view" id="view-notes" data-title="Notlar" hidden>
+      <h2 class="group">Hatırlatıcılar</h2>
+      <form class="block compose" id="rem-form">
+        <input id="rem-input" type="text" autocomplete="off" placeholder="yarın 15'te faturayı öde" aria-label="Yeni hatırlatıcı">
+        <button class="btn btn-primary" type="submit">Kur</button>
+      </form>
+      <div class="block" id="reminders"></div>
+
+      <h2 class="group">Notlar</h2>
+      <input class="search" id="note-search" type="search" placeholder="Notlarda ara" aria-label="Notlarda ara">
+      <div class="block" id="notes"></div>
+    </section>
+
+    <section class="view" id="view-settings" data-title="Ayarlar" hidden>
+      <h2 class="group">Sabah özeti</h2>
+      <div class="block">
+        <label class="row">
+          <span>Gönderim saati</span>
+          <input type="time" id="set-time" required>
+        </label>
+        <label class="row">
+          <span>Hava kartı görseli</span>
+          <input type="checkbox" class="switch" id="set-photo">
+        </label>
+      </div>
+
+      <h2 class="group">Özette neler olsun</h2>
+      <div class="block">
+        <label class="row"><span>Hava ve kıyafet önerisi</span><input type="checkbox" class="switch" data-section="weather"></label>
+        <label class="row"><span>Bugünün dersleri</span><input type="checkbox" class="switch" data-section="lessons"></label>
+        <label class="row"><span>Dolar, euro, gram altın</span><input type="checkbox" class="switch" data-section="finance"></label>
+        <label class="row"><span>Haber başlıkları</span><input type="checkbox" class="switch" data-section="news"></label>
+        <div class="row">
+          <span>Haber sayısı</span>
+          <div class="stepper">
+            <button type="button" id="news-minus" aria-label="Azalt">−</button>
+            <output id="news-count">5</output>
+            <button type="button" id="news-plus" aria-label="Artır">+</button>
+          </div>
+        </div>
+      </div>
+      <p class="foot">Değişiklikler alttaki Kaydet düğmesiyle kaydedilir. Saat hemen geçerli olur.</p>
+    </section>
+
+    <div class="gate" id="gate" hidden>
+      <p class="gate-title">Saha paneli</p>
+      <p id="gate-text">Bu panel Telegram içinden açılır. Botta sol alttaki Panel düğmesine bas.</p>
+    </div>
+  </main>
+
+  <nav class="tabs" id="tabs">
+    <button data-view="today" aria-current="page"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>Bugün</button>
+    <button data-view="program"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="3"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4"/></svg>Program</button>
+    <button data-view="notes"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5v4.5H19M9 12.5h7M9 16h5"/></svg>Notlar</button>
+    <button data-view="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>Ayarlar</button>
+  </nav>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -22,6 +22,7 @@ class Config:
     lon: float
     briefing_time: time
     port: int
+    public_url: str | None = None
 
 
 def load(env: Mapping[str, str] = os.environ) -> Config:
@@ -44,4 +45,5 @@ def load(env: Mapping[str, str] = os.environ) -> Config:
         lon=float(env.get("LON", "27.17")),
         briefing_time=time(int(hour), int(minute), tzinfo=tz),
         port=int(env.get("PORT", "10000")),
+        public_url=(env.get("PUBLIC_URL") or env.get("RENDER_EXTERNAL_URL") or "").rstrip("/") or None,
     )

@@ -154,3 +154,18 @@ async def test_status(client):
     data = await (await client.get("/api/status", headers=_auth())).json()
     assert data["settings"]["briefing_time"] == "07:00"
     assert data["errors"] == [] and data["next_briefing"] is None and data["uptime_s"] >= 0
+
+
+async def test_weather_endpoint(monkeypatch):
+    from app import weather as weather_mod
+    from app.weather import DayWeather
+
+    async def fake_fetch(lat, lon, tz, http):
+        return DayWeather(11, 27, 12, 22, 10, 9, tuple([20.0] * 24), "clear")
+
+    monkeypatch.setattr(weather_mod, "fetch", fake_fetch)
+    tg = _tg()
+    tg.bot_data["cfg"].lat, tg.bot_data["cfg"].lon = 38.39, 27.17
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        data = await (await c.get("/api/weather", headers=_auth())).json()
+        assert data["condition"] == "clear" and data["label"] == "Açık" and data["t_max"] == 27 and len(data["hourly"]) == 24
