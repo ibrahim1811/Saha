@@ -62,6 +62,9 @@ CONFIRM_BUTTONS = InlineKeyboardMarkup([[
 ]])
 MAX_PENDING_PHOTOS = 10
 KEEP_ALIVE_SECONDS = 600
+ALERT_INTERVAL_SECONDS = 7200
+ALERT_FIRST_HOUR = 7
+ALERT_LAST_HOUR = 21
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
@@ -182,6 +185,32 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = N
         await send_text(context.bot, owner, result.text_without_weather)
         return
     await send_text(context.bot, owner, result.text)
+
+
+async def weather_alert_job(context) -> None:
+    d = _deps(context)
+    now = _now(context)
+    if not ALERT_FIRST_HOUR <= now.hour <= ALERT_LAST_HOUR:
+        return
+    if not (await load_settings(d)).get("weather_alerts"):
+        return
+    cfg = d["cfg"]
+    try:
+        w = await weather.fetch(cfg.lat, cfg.lon, cfg.tz.key, d["http"], now.date())
+    except Exception as e:
+        log.warning("Hava uyarısı için hava alınamadı: %r", e)
+        return
+    sent = d.setdefault("alerts_sent", set())
+    for kind, message in weather.alerts(w, now.hour):
+        key = (now.date(), kind)
+        if key in sent:
+            continue
+        sent.add(key)
+        await context.bot.send_message(cfg.owner_id, message)
+
+
+def schedule_weather_alerts(job_queue) -> None:
+    job_queue.run_repeating(weather_alert_job, interval=ALERT_INTERVAL_SECONDS, first=120, name="hava-uyari")
 
 
 async def keep_alive(context) -> None:

@@ -39,6 +39,8 @@ class DayWeather:
     hourly: tuple[float | None, ...] = ()
     condition: str = ""
     rain_hours: tuple[int, ...] = ()
+    hourly_wind: tuple[float | None, ...] = ()
+    storm_hours: tuple[int, ...] = ()
 
 
 def condition_from_wmo(code: int | None) -> str:
@@ -84,6 +86,8 @@ def parse_openmeteo(data: dict, index: int = 0) -> DayWeather:
         hourly=tuple(hourly),
         condition=condition_from_wmo(codes[index] if len(codes) > index else None),
         rain_hours=tuple(h for h, p in enumerate(probs) if p is not None and p >= RAIN_PROB_THRESHOLD),
+        hourly_wind=tuple((data["hourly"].get("wind_speed_10m") or [])[24 * index : 24 * index + 24]),
+        storm_hours=tuple(h for h, c in enumerate((data["hourly"].get("weather_code") or [])[24 * index : 24 * index + 24]) if c is not None and c >= 95),
     )
 
 
@@ -92,6 +96,8 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
     winds: list[float] = []
     precip = 0.0
     rain_hours: list[int] = []
+    winds_by_hour: dict[int, float] = {}
+    storms: list[int] = []
     symbols: dict[int, str] = {}
     for item in data["properties"]["timeseries"]:
         local = datetime.fromisoformat(item["time"].replace("Z", "+00:00")).astimezone(tz)
@@ -100,6 +106,7 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         details = item["data"]["instant"]["details"]
         temps[local.hour] = details["air_temperature"]
         winds.append(details.get("wind_speed", 0.0) * 3.6)
+        winds_by_hour[local.hour] = round(details.get("wind_speed", 0.0) * 3.6, 1)
         one = item["data"].get("next_1_hours")
         nxt = one or item["data"].get("next_6_hours") or {}
         amount = nxt.get("details", {}).get("precipitation_amount", 0.0)
@@ -109,6 +116,8 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
             rain_hours.extend(range(local.hour, min(24, local.hour + span)))
         if "summary" in nxt:
             symbols[local.hour] = nxt["summary"]["symbol_code"]
+            if "thunder" in nxt["summary"]["symbol_code"]:
+                storms.extend(range(local.hour, min(24, local.hour + (1 if one else 6))))
     if not temps:
         raise ValueError("MET Norway verisinde bugüne ait saat yok")
     symbol = symbols[min(symbols, key=lambda h: abs(h - 12))] if symbols else ""
@@ -122,6 +131,8 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         hourly=tuple(temps.get(h) for h in range(24)),
         condition=condition_from_symbol(symbol),
         rain_hours=tuple(sorted(set(rain_hours))),
+        hourly_wind=tuple(winds_by_hour.get(h) for h in range(24)),
+        storm_hours=tuple(sorted(set(storms))),
     )
 
 
@@ -133,7 +144,7 @@ async def _openmeteo(lat: float, lon: float, tz_name: str, http: httpx.AsyncClie
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": "temperature_2m,precipitation_probability",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,wind_speed_10m",
         "daily": "temperature_2m_min,temperature_2m_max,precipitation_probability_max,wind_speed_10m_max,weather_code",
         "timezone": tz_name,
         "forecast_days": offset + 1,
@@ -206,3 +217,39 @@ def rain_warning(w: DayWeather, from_hour: int = 0) -> str | None:
     if w.rain_prob >= RAIN_PROB_THRESHOLD:
         return f"☔ Yağmur ihtimali %{w.rain_prob}. Şemsiyeni yanına al."
     return None
+
+
+HEAT_LIMIT = 35
+WIND_LIMIT = 50
+DROP_LIMIT = 8
+
+
+def _known(values, from_hour: int) -> list[tuple[int, float]]:
+    return [(h, v) for h, v in enumerate(values) if h >= from_hour and v is not None]
+
+
+def alerts(w: DayWeather, from_hour: int) -> list[tuple[str, str]]:
+    out: list[tuple[str, str]] = []
+    storm = tuple(h for h in w.storm_hours if h >= from_hour)
+    if storm:
+        out.append(("storm", f"⛈ Gök gürültülü sağanak bekleniyor: {', '.join(_ranges(storm))}. Dışarıdaysan kapalı bir yere geç."))
+    temps = _known(w.hourly, from_hour)
+    if temps:
+        hour, hottest = max(temps, key=lambda t: t[1])
+        if hottest >= HEAT_LIMIT:
+            out.append(("heat", f"🥵 Bugün sıcaklık {hottest:.0f}°'ye çıkıyor (en sıcak {hour:02d}:00). Bol su iç, öğle güneşinden kaçın."))
+    winds = _known(w.hourly_wind, from_hour)
+    if winds:
+        hour, strongest = max(winds, key=lambda t: t[1])
+        if strongest >= WIND_LIMIT:
+            out.append(("wind", f"💨 Kuvvetli rüzgâr bekleniyor: {strongest:.0f} km/s (en çok {hour:02d}:00)."))
+    values = dict(temps)
+    for hour, temp in temps:
+        ahead = [values[h] for h in range(hour + 1, hour + 5) if h in values]
+        if ahead and temp - min(ahead) >= DROP_LIMIT:
+            out.append(("drop", f"🥶 {hour + 1:02d}:00'den sonra hava hızla soğuyor ({temp:.0f}° → {min(ahead):.0f}°). Yanına kalın bir şey al."))
+            break
+    soon = tuple(h for h in w.rain_hours if from_hour <= h <= from_hour + 2)
+    if soon:
+        out.append(("rain", f"☔ 1-2 saat içinde yağmur bekleniyor ({', '.join(_ranges(soon))}). Şemsiyeni unutma."))
+    return out

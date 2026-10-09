@@ -240,3 +240,55 @@ def test_metno_six_hour_block_marks_all_hours():
                                                   "next_6_hours": {"summary": {"symbol_code": "rain"}, "details": {"precipitation_amount": 3.0}}}},
     ]}}
     assert parse_metno(data, date(2026, 10, 10), TZ).rain_hours == (12, 13, 14, 15, 16, 17)
+
+
+def _alert_weather(**kw):
+    temps = [20.0] * 24
+    base = dict(t_min=15, t_max=25, t_morning=18, t_evening=20, rain_prob=0, wind_max=10, hourly=tuple(temps))
+    base.update(kw)
+    return DayWeather(**base)
+
+
+def test_alerts_storm_heat_wind():
+    temps = [25.0] * 24
+    temps[14] = 37.0
+    wind = [10.0] * 24
+    wind[16] = 55.0
+    w = _alert_weather(hourly=tuple(temps), hourly_wind=tuple(wind), storm_hours=(17, 18))
+    kinds = dict(weather.alerts(w, 9))
+    assert "15:00" not in kinds["storm"] and "17:00–19:00" in kinds["storm"]
+    assert "37°" in kinds["heat"]
+    assert "55 km/s" in kinds["wind"] and "16:00" in kinds["wind"]
+
+
+def test_alerts_ignore_past_hours():
+    temps = [25.0] * 24
+    temps[10] = 38.0
+    w = _alert_weather(hourly=tuple(temps), storm_hours=(8,))
+    assert weather.alerts(w, 12) == []
+
+
+def test_alerts_sudden_drop_and_rain_soon():
+    temps = [22.0] * 16 + [21.0, 18.0, 14.0, 13.0, 12.0, 12.0, 12.0, 12.0]
+    w = _alert_weather(hourly=tuple(temps), rain_hours=(13, 14), rain_prob=70)
+    kinds = dict(weather.alerts(w, 12))
+    assert "15:00'den sonra" in kinds["drop"] and "22° → 14°" in kinds["drop"]
+    assert "13:00–15:00" in kinds["rain"]
+    assert "rain" not in dict(weather.alerts(w, 9))
+
+
+def test_openmeteo_hourly_wind_and_storm():
+    d = _om()
+    d["hourly"]["wind_speed_10m"] = [5.0] * 24
+    d["hourly"]["weather_code"] = [0] * 15 + [95, 96] + [0] * 7
+    w = parse_openmeteo(d)
+    assert w.hourly_wind[0] == 5.0 and w.storm_hours == (15, 16)
+
+
+def test_metno_hourly_wind_and_storm():
+    data = {"properties": {"timeseries": [
+        {"time": "2026-10-10T11:00:00Z", "data": {"instant": {"details": {"air_temperature": 20, "wind_speed": 10}},
+                                                  "next_1_hours": {"summary": {"symbol_code": "rainandthunder"}, "details": {"precipitation_amount": 2}}}},
+    ]}}
+    w = parse_metno(data, date(2026, 10, 10), TZ)
+    assert w.hourly_wind[14] == 36.0 and w.storm_hours == (14,)

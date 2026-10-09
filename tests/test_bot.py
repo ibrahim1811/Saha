@@ -503,3 +503,40 @@ async def test_yks_command():
     ctx.bot_data["db"] = SimpleNamespace(get_settings=AsyncMock(return_value=None), list_exams=AsyncMock(return_value=[]))
     await botmod.yks(update, ctx)
     assert "YKS" in ctx.bot.send_message.await_args.args[1]
+
+
+async def test_weather_alert_job_sends_each_kind_once(monkeypatch):
+    from app import weather as wmod
+    from app.weather import DayWeather
+
+    temps = [25.0] * 14 + [37.0] * 10
+
+    async def fake_fetch(*a, **k):
+        return DayWeather(20, 37, 22, 37, 0, 10, tuple(temps), "clear")
+
+    monkeypatch.setattr(wmod, "fetch", fake_fetch)
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 10, 11, 0, tzinfo=TZ))
+    ctx = _brief_ctx()
+    ctx.bot_data["cfg"].lat, ctx.bot_data["cfg"].lon = 38.39, 27.17
+    await botmod.weather_alert_job(ctx)
+    await botmod.weather_alert_job(ctx)
+    assert ctx.bot.send_message.await_count == 1
+    assert "37°" in ctx.bot.send_message.await_args.args[1]
+
+
+async def test_weather_alert_job_respects_setting_and_quiet_hours(monkeypatch):
+    from app import weather as wmod
+
+    called = []
+
+    async def fake_fetch(*a, **k):
+        called.append(1)
+
+    monkeypatch.setattr(wmod, "fetch", fake_fetch)
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 10, 23, 0, tzinfo=TZ))
+    await botmod.weather_alert_job(_brief_ctx())
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 10, 11, 0, tzinfo=TZ))
+    ctx = _brief_ctx()
+    ctx.bot_data["db"].get_settings = AsyncMock(return_value={"weather_alerts": False})
+    await botmod.weather_alert_job(ctx)
+    assert called == []

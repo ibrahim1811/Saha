@@ -24,6 +24,7 @@ async def _post_init(app: Application) -> None:
     bot.reschedule_briefing(app.job_queue, s["briefing_time"], cfg.tz)
     bot.reschedule_evening(app.job_queue, s, cfg.tz)
     bot.schedule_keep_alive(app.job_queue, cfg.public_url)
+    bot.schedule_weather_alerts(app.job_queue)
     try:
         await bot.setup_menu(app)
     except Exception:
