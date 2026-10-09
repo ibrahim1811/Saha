@@ -1,12 +1,14 @@
 import copy
 import re
 
-SECTIONS = ["weather", "lessons", "finance", "news"]
+SECTIONS = ["weather", "lessons", "tasks", "finance", "news"]
 DEFAULTS = {
     "briefing_time": "07:00",
     "sections": {s: True for s in SECTIONS},
     "photo_card": True,
     "news_count": 5,
+    "evening_enabled": True,
+    "evening_time": "23:00",
 }
 
 
@@ -48,9 +50,13 @@ def validate(payload) -> dict:
     count = payload.get("news_count")
     if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 10:
         raise SettingsError("Haber sayısı 1 ile 10 arasında olmalı")
+    if not isinstance(payload.get("evening_enabled"), bool):
+        raise SettingsError("Akşam özeti açık/kapalı olmalı")
     return {
         "briefing_time": _time(payload.get("briefing_time")),
         "sections": dict(sections),
         "photo_card": payload["photo_card"],
         "news_count": count,
+        "evening_enabled": payload["evening_enabled"],
+        "evening_time": _time(payload.get("evening_time")),
     }

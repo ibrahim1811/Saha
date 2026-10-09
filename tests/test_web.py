@@ -102,7 +102,8 @@ async def test_settings_get_put(client):
     resp = await client.put("/api/settings", json=s, headers=_auth())
     assert resp.status == 200
     assert client.tg.bot_data["db"].settings["briefing_time"] == "06:30"
-    client.tg.job_queue.run_daily.assert_called_once()
+    names = [c.kwargs["name"] for c in client.tg.job_queue.run_daily.call_args_list]
+    assert names == ["sabah-ozeti", "aksam-ozeti"]
 
 
 async def test_settings_invalid_400_not_saved(client):
@@ -202,7 +203,7 @@ async def test_preview_targets_next_briefing_day(monkeypatch, hour, expected):
 
     asked = {}
 
-    async def fake_build(bot_data, day):
+    async def fake_build(bot_data, day, **kw):
         asked["day"] = day
         return Briefing("h", "metin", "metin", None), {"photo_card": True}
 
@@ -227,3 +228,52 @@ async def test_send_now_sends_next_briefing_day(monkeypatch):
     async with TestClient(TestServer(build_web_app(_tg()))) as c:
         assert (await c.post("/api/briefing/send", headers=_auth())).status == 200
     assert asked["day"].isoformat() == "2026-10-10"
+
+
+
+class TaskStore(Store):
+    def __init__(self):
+        super().__init__()
+        self.tasks = {}
+
+    async def list_tasks(self, include_done=False):
+        return [{"id": k, **v} for k, v in sorted(self.tasks.items()) if include_done or not v["done"]]
+
+    async def add_task(self, kind, title, due):
+        tid = len(self.tasks) + 1
+        self.tasks[tid] = {"kind": kind, "title": title, "due": due, "done": False}
+        return tid
+
+    async def set_task_done(self, tid, done):
+        if tid not in self.tasks:
+            return False
+        self.tasks[tid]["done"] = done
+        return True
+
+    async def delete_task(self, tid):
+        return self.tasks.pop(tid, None) is not None
+
+
+async def test_tasks_api_flow():
+    due = (datetime.now(TZ) + timedelta(days=3)).date()
+    tg = _tg(FakeLLM(reply=f'{{"kind": "sinav", "title": "Mat sınavı", "due": "{due.isoformat()}"}}'))
+    tg.bot_data["db"] = TaskStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        created = await (await c.post("/api/tasks", json={"text": "mat sınavı perşembe"}, headers=_auth())).json()
+        assert created["title"] == "Mat sınavı" and created["due"] == due.isoformat()
+        items = await (await c.get("/api/tasks", headers=_auth())).json()
+        assert items[0]["label"] == "3 gün sonra"
+        assert (await c.patch(f"/api/tasks/{created['id']}", json={"done": True}, headers=_auth())).status == 200
+        assert await (await c.get("/api/tasks", headers=_auth())).json() == []
+        assert len(await (await c.get("/api/tasks?all=1", headers=_auth())).json()) == 1
+        assert (await c.patch("/api/tasks/99", json={"done": True}, headers=_auth())).status == 404
+        assert (await c.patch(f"/api/tasks/{created['id']}", json={"done": "evet"}, headers=_auth())).status == 400
+        assert (await c.delete(f"/api/tasks/{created['id']}", headers=_auth())).status == 200
+
+
+async def test_task_past_date_400():
+    tg = _tg(FakeLLM(reply='{"kind": "odev", "title": "x", "due": "2020-01-01"}'))
+    tg.bot_data["db"] = TaskStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        resp = await c.post("/api/tasks", json={"text": "eski ödev"}, headers=_auth())
+        assert resp.status == 400 and "geçmişte" in (await resp.json())["error"]

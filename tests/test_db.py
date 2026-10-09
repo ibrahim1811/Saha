@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL yok")
 @pytest.fixture
 async def db():
     d = await DB.connect(URL)
-    await d.pool.execute("TRUNCATE schedules, notes, reminders, settings RESTART IDENTITY")
+    await d.pool.execute("TRUNCATE schedules, notes, reminders, settings, tasks RESTART IDENTITY")
     yield d
     await d.close()
 
@@ -61,3 +61,16 @@ async def test_delete_schedule(db):
     assert await db.delete_schedule("dershane", "pazar") is True
     assert await db.get_schedule("dershane", "pazar") is None
     assert await db.delete_schedule("dershane", "pazar") is False
+
+
+async def test_tasks_crud(db):
+    from datetime import date
+
+    a = await db.add_task("odev", "Fizik", date(2026, 10, 12))
+    b = await db.add_task("sinav", "Mat", date(2026, 10, 10))
+    assert [t["id"] for t in await db.list_tasks()] == [b, a]
+    assert await db.set_task_done(b, True) is True
+    assert [t["id"] for t in await db.list_tasks()] == [a]
+    assert len(await db.list_tasks(include_done=True)) == 2
+    assert [t["title"] for t in await db.tasks_due_between(date(2026, 10, 11), date(2026, 10, 15))] == ["Fizik"]
+    assert await db.delete_task(a) is True and await db.delete_task(a) is False

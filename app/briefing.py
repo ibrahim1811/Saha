@@ -2,9 +2,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
-from app import finance, news, outfit, weather
+from app import finance, news, outfit, tasks, weather
 from app.schedule import format_lessons, lessons_for
 from app.weather import DayWeather
 
@@ -15,9 +15,11 @@ DAYS = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "P
 SECTIONS = [
     ("weather", "🌤 Hava", "Hava"),
     ("lessons", "📚 Bugünün dersleri", "Ders programı"),
+    ("tasks", "📌 Ödev ve sınavlar", "Ödev ve sınavlar"),
     ("finance", "💱 Piyasa", "Piyasa"),
     ("news", "📰 Haberler", "Haberler"),
 ]
+EVENING_SECTIONS = {"weather", "lessons", "tasks"}
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class Sources:
     lessons: Callable[[], Awaitable[str]]
     finance: Callable[[], Awaitable[str]]
     news: Callable[[], Awaitable[str]]
+    tasks: Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -46,14 +49,17 @@ class Briefing:
     weather: WeatherInfo | None
 
 
-def header(today: date) -> str:
-    return f"Günaydın Kayra! ☀️ {today.day} {MONTHS[today.month - 1]} {DAYS[today.weekday()]}"
+def header(today: date, evening: bool = False) -> str:
+    day = f"{today.day} {MONTHS[today.month - 1]} {DAYS[today.weekday()]}"
+    return f"🌙 İyi geceler Kayra! Yarın {day}" if evening else f"Günaydın Kayra! ☀️ {day}"
 
 
-async def build(today: date, src: Sources, settings: dict) -> Briefing:
-    enabled = [s for s in SECTIONS if settings["sections"].get(s[0])]
+async def build(today: date, src: Sources, settings: dict, evening: bool = False) -> Briefing:
+    enabled = [s for s in SECTIONS if settings["sections"].get(s[0]) and (not evening or s[0] in EVENING_SECTIONS)]
+    if evening:
+        enabled = [(a, t.replace("Bugünün", "Yarının"), l) for a, t, l in enabled]
     results = await asyncio.gather(*(getattr(src, attr)() for attr, _, _ in enabled), return_exceptions=True)
-    head = header(today)
+    head = header(today, evening)
     parts: list[tuple[str, str]] = []
     info = None
     for (attr, title, label), result in zip(enabled, results):
@@ -66,15 +72,19 @@ async def build(today: date, src: Sources, settings: dict) -> Briefing:
         else:
             body = result
         parts.append((attr, f"{title}\n{body}"))
+    top = [head]
+    alert = weather.rain_warning(info.w) if info else None
+    if alert:
+        top.append(alert)
     return Briefing(
         header=head,
-        text="\n\n".join([head] + [p for _, p in parts]),
-        text_without_weather="\n\n".join([head] + [p for a, p in parts if a != "weather"]),
+        text="\n\n".join(top + [p for _, p in parts]),
+        text_without_weather="\n\n".join(top + [p for a, p in parts if a != "weather"]),
         weather=info,
     )
 
 
-def make_sources(cfg, db, llm, http, today: date, settings: dict) -> Sources:
+def make_sources(cfg, db, llm, http, today: date, settings: dict, ref_day: date | None = None) -> Sources:
     async def weather_section() -> WeatherInfo:
         w = await weather.fetch(cfg.lat, cfg.lon, cfg.tz.key, http, today)
         return WeatherInfo(w, await outfit.advice(w, llm), outfit.hints(w))
@@ -82,9 +92,14 @@ def make_sources(cfg, db, llm, http, today: date, settings: dict) -> Sources:
     async def lessons_section() -> str:
         return format_lessons(await lessons_for(today, db))
 
+    async def tasks_section() -> str:
+        items = await db.tasks_due_between(today, today + timedelta(days=7))
+        return tasks.format_tasks(items, ref_day or today)
+
     return Sources(
         weather=weather_section,
         lessons=lessons_section,
         finance=lambda: finance.fetch(http),
         news=lambda: news.fetch(http, settings["news_count"]),
+        tasks=tasks_section,
     )

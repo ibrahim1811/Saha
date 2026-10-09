@@ -9,7 +9,7 @@ from aiohttp import web
 
 from dataclasses import asdict
 
-from app import bot, card, reminders, schedule, settings, weather
+from app import bot, card, reminders, schedule, settings, tasks, weather
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
 
@@ -39,7 +39,7 @@ async def errors(request: web.Request, handler):
         return await handler(request)
     except ApiError as e:
         return _json({"error": e.message}, e.status)
-    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError) as e:
+    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError) as e:
         return _json({"error": str(e)}, 400)
     except web.HTTPException:
         raise
@@ -136,6 +136,7 @@ async def put_settings(request):
     value = settings.validate(await _body(request))
     await d["db"].save_settings(value)
     bot.reschedule_briefing(_tg(request).job_queue, value["briefing_time"], d["cfg"].tz)
+    bot.reschedule_evening(_tg(request).job_queue, value, d["cfg"].tz)
     return _json(value)
 
 
@@ -199,6 +200,38 @@ async def delete_reminder(request):
     return _json({"ok": True})
 
 
+async def get_tasks(request):
+    d = _data(request)
+    today = _now(d["cfg"].tz).date()
+    items = await d["db"].list_tasks(include_done=request.query.get("all") == "1")
+    return _json([{**t, "label": tasks.relative(t["due"], today)} for t in items])
+
+
+async def post_task(request):
+    d = _data(request)
+    text = str((await _body(request)).get("text", "")).strip()
+    if not text:
+        raise ApiError(400, "Ödev ya da sınav metni boş")
+    kind, title, due = await tasks.parse(text, _now(d["cfg"].tz).date(), d["llm"])
+    tid = await d["db"].add_task(kind, title, due)
+    return _json({"id": tid, "kind": kind, "title": title, "due": due, "done": False})
+
+
+async def patch_task(request):
+    done = (await _body(request)).get("done")
+    if not isinstance(done, bool):
+        raise ApiError(400, "done true ya da false olmalı")
+    if not await _data(request)["db"].set_task_done(_int(request, "id"), done):
+        raise ApiError(404, "Ödev ya da sınav bulunamadı")
+    return _json({"ok": True})
+
+
+async def delete_task(request):
+    if not await _data(request)["db"].delete_task(_int(request, "id")):
+        raise ApiError(404, "Ödev ya da sınav bulunamadı")
+    return _json({"ok": True})
+
+
 async def preview(request):
     d = _data(request)
     today = await _next_day(d)
@@ -241,6 +274,10 @@ def build_web_app(tg_app) -> web.Application:
         web.get("/api/reminders", get_reminders),
         web.post("/api/reminders", post_reminder),
         web.delete("/api/reminders/{id}", delete_reminder),
+        web.get("/api/tasks", get_tasks),
+        web.post("/api/tasks", post_task),
+        web.patch("/api/tasks/{id}", patch_task),
+        web.delete("/api/tasks/{id}", delete_task),
         web.get("/api/briefing/preview", preview),
         web.post("/api/briefing/send", send_now),
     ])

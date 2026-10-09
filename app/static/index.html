@@ -47,6 +47,9 @@
       <h2 class="group">Bugünün dersleri</h2>
       <div class="block" id="today-lessons"></div>
 
+      <h2 class="group">Yaklaşan ödev ve sınavlar</h2>
+      <div class="block" id="today-tasks"></div>
+
       <h2 class="group">Son sorunlar</h2>
       <div class="block" id="errors"></div>
       <p class="foot" id="uptime"></p>
@@ -72,6 +75,14 @@
     </section>
 
     <section class="view" id="view-notes" data-title="Notlar" hidden>
+      <h2 class="group">Ödev ve sınavlar</h2>
+      <form class="block compose" id="task-form">
+        <input id="task-input" type="text" autocomplete="off" placeholder="fizik ödevi cuma teslim" aria-label="Yeni ödev ya da sınav">
+        <button class="btn btn-primary" type="submit">Ekle</button>
+      </form>
+      <div class="block" id="tasks"></div>
+      <button class="link-muted" id="tasks-toggle-done">Tamamlananları göster</button>
+
       <h2 class="group">Hatırlatıcılar</h2>
       <form class="block compose" id="rem-form">
         <input id="rem-input" type="text" autocomplete="off" placeholder="yarın 15'te faturayı öde" aria-label="Yeni hatırlatıcı">
@@ -97,10 +108,24 @@
         </label>
       </div>
 
-      <h2 class="group">Özette neler olsun</h2>
+      <h2 class="group">Akşam özeti</h2>
+      <div class="block">
+        <label class="row">
+          <span>Yarının özetini gönder</span>
+          <input type="checkbox" class="switch" id="set-evening">
+        </label>
+        <label class="row">
+          <span>Gönderim saati</span>
+          <input type="time" id="set-evening-time" required>
+        </label>
+      </div>
+      <p class="foot">Akşam özetinde yarının havası, yağmur uyarısı, dersleri ve ödev/sınavları olur.</p>
+
+      <h2 class="group">Sabah özetinde neler olsun</h2>
       <div class="block">
         <label class="row"><span>Hava ve kıyafet önerisi</span><input type="checkbox" class="switch" data-section="weather"></label>
         <label class="row"><span>Bugünün dersleri</span><input type="checkbox" class="switch" data-section="lessons"></label>
+        <label class="row"><span>Ödev ve sınavlar</span><input type="checkbox" class="switch" data-section="tasks"></label>
         <label class="row"><span>Dolar, euro, gram altın</span><input type="checkbox" class="switch" data-section="finance"></label>
         <label class="row"><span>Haber başlıkları</span><input type="checkbox" class="switch" data-section="news"></label>
         <div class="row">

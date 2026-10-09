@@ -90,7 +90,7 @@ def _brief_ctx():
 
 
 def _patch_build(monkeypatch, result=RESULT):
-    async def fake_build(today, src, settings):
+    async def fake_build(today, src, settings, **kw):
         return result
     monkeypatch.setattr(briefing_mod, "make_sources", lambda *a, **k: None)
     monkeypatch.setattr(briefing_mod, "build", fake_build)
@@ -249,7 +249,7 @@ def test_next_briefing_day(hour, minute, expected):
 async def test_send_briefing_uses_given_day(monkeypatch):
     asked = {}
 
-    async def fake_build(bot_data, day):
+    async def fake_build(bot_data, day, **kw):
         asked["day"] = day
         return RESULT, {"photo_card": False}
 
@@ -262,7 +262,7 @@ async def test_send_briefing_uses_given_day(monkeypatch):
 async def test_scheduled_job_sends_today(monkeypatch):
     asked = {}
 
-    async def fake_build(bot_data, day):
+    async def fake_build(bot_data, day, **kw):
         asked["day"] = day
         return RESULT, {"photo_card": False}
 
@@ -324,3 +324,47 @@ async def test_photo_timeout_does_not_resend_weather(monkeypatch):
     ctx.bot.send_photo = AsyncMock(side_effect=TimedOut())
     await botmod.send_briefing(ctx)
     assert ctx.bot.send_message.await_args.args[1] == RESULT.text_without_weather
+
+
+def test_evening_job_scheduling():
+    app = Application.builder().token("123:abc").build()
+    botmod.reschedule_evening(app.job_queue, {"evening_enabled": True, "evening_time": "23:00"}, TZ)
+    botmod.reschedule_evening(app.job_queue, {"evening_enabled": True, "evening_time": "22:30"}, TZ)
+    jobs = app.job_queue.get_jobs_by_name("aksam-ozeti")
+    assert len(jobs) == 1 and jobs[0].data == "22:30"
+    botmod.reschedule_evening(app.job_queue, {"evening_enabled": False, "evening_time": "22:30"}, TZ)
+    assert app.job_queue.get_jobs_by_name("aksam-ozeti") == ()
+
+
+async def test_evening_job_sends_tomorrow_evening_mode(monkeypatch):
+    asked = {}
+
+    async def fake_send(context, day=None, evening=False):
+        asked.update(day=day, evening=evening)
+
+    monkeypatch.setattr(botmod, "send_briefing", fake_send)
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 9, 23, 0, tzinfo=TZ))
+    await botmod.send_evening(_brief_ctx())
+    assert asked == {"day": date(2026, 10, 10), "evening": True}
+
+
+async def test_text_routes_task_request():
+    from datetime import timedelta as _td
+
+    due = (_dt.now(TZ) + _td(days=2)).date()
+    llm = FakeLLM(reply=f'{{"kind": "odev", "title": "Fizik ödevi", "due": "{due.isoformat()}"}}')
+    update = _msg_update("fizik ödevi cuma teslim")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_task=AsyncMock(return_value=7))
+    await botmod.text(update, ctx)
+    ctx.bot_data["db"].add_task.assert_awaited_once_with("odev", "Fizik ödevi", due)
+    assert "#7" in update.message.reply_text.await_args.args[0]
+
+
+async def test_bitti_marks_done():
+    update = _msg_update("/bitti 7")
+    ctx = _msg_ctx(None)
+    ctx.args = ["7"]
+    ctx.bot_data["db"] = SimpleNamespace(set_task_done=AsyncMock(return_value=True))
+    await botmod.bitti(update, ctx)
+    ctx.bot_data["db"].set_task_done.assert_awaited_once_with(7, True)

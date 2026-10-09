@@ -10,7 +10,7 @@ from telegram.ext import (
 
 from telegram.error import Conflict, NetworkError, TimedOut
 
-from app import briefing, card, chat, reminders, schedule, settings, weather
+from app import briefing, card, chat, reminders, schedule, settings, tasks, weather
 from app.llm import LLMError
 from app.textutil import split_message
 
@@ -29,6 +29,8 @@ HELP = (
     "/program kayıtlı programlar\n"
     "/notlar son notlar\n"
     "/hatirlat <metin>\n"
+    "📌 \"fizik ödevi cuma teslim\" yaz → ödev/sınav olarak kaydederim\n"
+    "/odevler ödev ve sınavlar, /bitti <id> tamamlandı\n"
     "/hatirlaticilar bekleyen hatırlatıcılar\n"
     "/sil <id> hatırlatıcıyı sil"
 )
@@ -75,6 +77,7 @@ COMMANDS = [
     BotCommand("program", "Kayıtlı ders programları"),
     BotCommand("notlar", "Son notlar"),
     BotCommand("hatirlaticilar", "Bekleyen hatırlatıcılar"),
+    BotCommand("odevler", "Ödev ve sınavlar"),
 ]
 
 
@@ -111,10 +114,23 @@ def reschedule_briefing(job_queue, time_str: str, tz: ZoneInfo) -> None:
     job_queue.run_daily(send_briefing, time=time(hour, minute, tzinfo=tz), name="sabah-ozeti", data=time_str)
 
 
-async def build_briefing(bot_data, today) -> tuple[briefing.Briefing, dict]:
+def reschedule_evening(job_queue, s: dict, tz: ZoneInfo) -> None:
+    for job in job_queue.get_jobs_by_name("aksam-ozeti"):
+        job.schedule_removal()
+    if s["evening_enabled"]:
+        hour, minute = map(int, s["evening_time"].split(":"))
+        job_queue.run_daily(send_evening, time=time(hour, minute, tzinfo=tz), name="aksam-ozeti", data=s["evening_time"])
+
+
+async def send_evening(context) -> None:
+    await send_briefing(context, _now(context).date() + timedelta(days=1), evening=True)
+
+
+async def build_briefing(bot_data, today, evening: bool = False) -> tuple[briefing.Briefing, dict]:
     s = await load_settings(bot_data)
-    src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s)
-    return await briefing.build(today, src, s), s
+    ref_day = datetime.now(bot_data["cfg"].tz).date()
+    src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s, ref_day)
+    return await briefing.build(today, src, s, evening=evening), s
 
 
 def photo_caption(info: briefing.WeatherInfo) -> str:
@@ -126,11 +142,11 @@ def next_briefing_day(now: datetime, briefing_time: str) -> date:
     return now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
 
 
-async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None) -> None:
+async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None, evening: bool = False) -> None:
     d = _deps(context)
     owner = d["cfg"].owner_id
     today = day or _now(context).date()
-    result, s = await build_briefing(d, today)
+    result, s = await build_briefing(d, today, evening=evening)
     if s["photo_card"] and result.weather:
         try:
             png = card.render_card(result.weather.w, result.weather.hints, today)
@@ -327,10 +343,44 @@ async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("🗑 Silindi." if deleted else "Bu numarada hatırlatıcı yok.")
 
 
+async def _create_task(update: Update, context, message: str) -> None:
+    d = _deps(context)
+    today = _now(context).date()
+    try:
+        kind, title, due = await tasks.parse(message, today, d["llm"])
+    except tasks.TaskError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+        return
+    except LLMError:
+        log.exception("Ödev/sınav LLM ile ayrıştırılamadı")
+        await update.message.reply_text(LLM_DOWN)
+        return
+    task_id = await d["db"].add_task(kind, title, due)
+    item = {"id": task_id, "kind": kind, "title": title, "due": due, "done": False}
+    await update.message.reply_text(f"Kaydedildi: {tasks.format_task(item, today)}\nBitince /bitti {task_id} yaz.")
+
+
+async def odevler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    d = _deps(context)
+    items = await d["db"].list_tasks()
+    await send_text(context.bot, update.effective_chat.id, tasks.format_tasks(items, _now(context).date()))
+
+
+async def bitti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or not context.args[0].lstrip("#").isdigit():
+        await update.message.reply_text("Kullanım: /bitti 3")
+        return
+    done = await _deps(context)["db"].set_task_done(int(context.args[0].lstrip("#")), True)
+    await update.message.reply_text("✅ Tamamlandı olarak işaretlendi." if done else "Bu numarada ödev ya da sınav yok.")
+
+
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message.text
     if is_reminder_request(message):
         await _create_reminder(update, context, message)
+        return
+    if tasks.is_task_request(message):
+        await _create_task(update, context, message)
         return
     d = _deps(context)
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
@@ -364,6 +414,8 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("hatirlat", hatirlat))
     app.add_handler(CommandHandler("hatirlaticilar", hatirlaticilar))
     app.add_handler(CommandHandler("sil", sil))
+    app.add_handler(CommandHandler("odevler", odevler))
+    app.add_handler(CommandHandler("bitti", bitti))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.VOICE, voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))

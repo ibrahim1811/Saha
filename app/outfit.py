@@ -5,8 +5,10 @@ from app.weather import DayWeather, summary
 log = logging.getLogger(__name__)
 
 SYSTEM = (
-    "Sen Saha'sın, Kayra'nın kişisel asistanı. Buca/İzmir için bugünkü havaya göre ne giymesi gerektiğini "
-    "Türkçe, samimi ve en fazla 3 cümleyle söyle. Ceket, şemsiye gibi somut öneriler ver."
+    "Sen Saha'sın, Kayra'nın kişisel asistanı. Buca/İzmir için verilen havaya göre ne giymesi gerektiğini "
+    "Türkçe, samimi ve en fazla 2 kısa cümleyle söyle. Sadece verilen sayılara dayan: yağış ihtimali %40'ın altındaysa "
+    "şemsiye önerme, sıcaklığın gün içinde nasıl değiştiğini doğru anlat (sabah serin, öğlen sıcak gibi). "
+    "Kural ipuçlarını mutlaka dikkate al, marka ya da gereksiz aksesuar sayma."
 )
 
 
@@ -27,7 +29,16 @@ def hints(w: DayWeather) -> list[str]:
 
 async def advice(w: DayWeather, llm) -> str:
     h = hints(w)
-    prompt = f"Bugünün havası: {summary(w)}. Kural ipuçları: {', '.join(h) or 'yok'}. Ne giymeliyim?"
+    timeline = []
+    if w.t_morning is not None:
+        timeline.append(f"sabah 08:00'de {w.t_morning:.0f}°")
+    timeline.append(f"gün içinde en yüksek {w.t_max:.0f}°")
+    if w.t_evening is not None:
+        timeline.append(f"akşam 19:00'da {w.t_evening:.0f}°")
+    prompt = (
+        f"Hava: {', '.join(timeline)}, en düşük {w.t_min:.0f}°, yağış ihtimali %{w.rain_prob}, rüzgâr {w.wind_max:.0f} km/s. "
+        f"Kural ipuçları: {', '.join(h) or 'yok'}. Ne giymeliyim?"
+    )
     try:
         return (await llm.ask(prompt, SYSTEM, max_tokens=600)).strip()
     except Exception:

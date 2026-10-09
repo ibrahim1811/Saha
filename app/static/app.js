@@ -7,7 +7,8 @@
   const $ = (id) => document.getElementById(id);
   const TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9.5 7V4.5h5V7"/></svg>';
 
-  const state = { view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null };
+  const state = { view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null, showDone: false };
+  const KIND_ICON = { odev: "📝", sinav: "🧪" };
 
   function haptic(type) {
     if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(type);
@@ -128,7 +129,10 @@
 
   async function loadToday() {
     $("sky-date").textContent = fmtDate(new Date().toISOString());
-    const [status, schedules] = await Promise.all([api("GET", "/api/status"), api("GET", "/api/schedules")]);
+    const [status, schedules, taskList] = await Promise.all([api("GET", "/api/status"), api("GET", "/api/schedules"), api("GET", "/api/tasks")]);
+    $("today-tasks").innerHTML = taskList.length
+      ? taskItems(taskList.slice(0, 3), false)
+      : '<p class="empty">Yaklaşan ödev ya da sınav yok. Bota "fizik ödevi cuma teslim" yazarak ekleyebilirsin.</p>';
     state.settings = status.settings;
     state.schedules = schedules;
 
@@ -210,6 +214,9 @@
     const s = state.settingsDraft;
     $("set-time").value = s.briefing_time;
     $("set-photo").checked = s.photo_card;
+    $("set-evening").checked = s.evening_enabled;
+    $("set-evening-time").value = s.evening_time;
+    $("set-evening-time").disabled = !s.evening_enabled;
     document.querySelectorAll("[data-section]").forEach((el) => (el.checked = s.sections[el.dataset.section]));
     $("news-count").textContent = s.news_count;
     const dirty = JSON.stringify(s) !== JSON.stringify(state.settings);
@@ -304,6 +311,24 @@
       .join("");
   }
 
+  function taskItems(list, editable) {
+    return list
+      .map((t) => {
+        const soon = !t.done && (t.label === "bugün" || t.label === "yarın" || t.label.endsWith("geçti"));
+        const due = new Date(t.due + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "long", timeZone: TZ });
+        const check = editable ? `<input type="checkbox" class="check" data-task-done="${t.id}" ${t.done ? "checked" : ""} aria-label="Tamamlandı">` : `<span aria-hidden="true">${KIND_ICON[t.kind] || "📝"}</span>`;
+        const del = editable ? `<button class="icon-btn" data-task-del="${t.id}" aria-label="Sil">${TRASH}</button>` : "";
+        return `<div class="item${t.done ? " done" : ""}">${check}<div class="item-main"><p class="item-title">${esc(t.title)}</p><p class="item-sub">${esc(due)}</p></div><span class="badge${soon ? " soon" : ""}">${esc(t.label)}</span>${del}</div>`;
+      })
+      .join("");
+  }
+
+  async function loadTasks() {
+    const list = await api("GET", "/api/tasks" + (state.showDone ? "?all=1" : ""));
+    $("tasks").innerHTML = list.length ? taskItems(list, true) : '<p class="empty">Ödev ya da sınav yok. Yukarıya "matematik sınavı 20 ekim" gibi yazabilirsin.</p>';
+    $("tasks-toggle-done").textContent = state.showDone ? "Tamamlananları gizle" : "Tamamlananları göster";
+  }
+
   async function loadReminders() {
     $("reminders").innerHTML = reminderItems(await api("GET", "/api/reminders"));
   }
@@ -314,7 +339,7 @@
   }
 
   async function loadNotes() {
-    await Promise.all([loadReminders(), loadNoteList()]);
+    await Promise.all([loadTasks(), loadReminders(), loadNoteList()]);
   }
 
   function bind() {
@@ -325,6 +350,59 @@
     $("set-time").addEventListener("change", (e) => {
       if (e.target.value) state.settingsDraft.briefing_time = e.target.value;
       renderSettings();
+    });
+    $("set-evening").addEventListener("change", (e) => {
+      state.settingsDraft.evening_enabled = e.target.checked;
+      renderSettings();
+    });
+    $("set-evening-time").addEventListener("change", (e) => {
+      if (e.target.value) state.settingsDraft.evening_time = e.target.value;
+      renderSettings();
+    });
+    $("task-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = $("task-input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.disabled = true;
+      try {
+        const t = await api("POST", "/api/tasks", { text });
+        input.value = "";
+        haptic("success");
+        toast(`Eklendi: ${t.title}`);
+        await loadTasks();
+      } catch (err) {
+        fail(err);
+      } finally {
+        input.disabled = false;
+      }
+    });
+    $("tasks").addEventListener("change", async (e) => {
+      const box = e.target.closest("[data-task-done]");
+      if (!box) return;
+      try {
+        await api("PATCH", "/api/tasks/" + box.dataset.taskDone, { done: box.checked });
+        haptic("success");
+        await loadTasks();
+      } catch (err) {
+        box.checked = !box.checked;
+        fail(err);
+      }
+    });
+    $("tasks").addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-task-del]");
+      if (!b || !(await confirmAsk("Bu kayıt silinsin mi?"))) return;
+      try {
+        await api("DELETE", "/api/tasks/" + b.dataset.taskDel);
+        toast("Silindi");
+        await loadTasks();
+      } catch (err) {
+        fail(err);
+      }
+    });
+    $("tasks-toggle-done").addEventListener("click", () => {
+      state.showDone = !state.showDone;
+      loadTasks().catch(fail);
     });
     $("set-photo").addEventListener("change", (e) => {
       state.settingsDraft.photo_card = e.target.checked;

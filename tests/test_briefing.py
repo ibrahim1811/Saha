@@ -19,7 +19,7 @@ async def _boom():
 
 
 def _src(**over):
-    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"))
+    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"), tasks=_ok("Yaklaşan ödev ya da sınav yok."))
     base.update(over)
     return Sources(**base)
 
@@ -77,3 +77,40 @@ async def test_make_sources_fetches_weather_for_given_day(monkeypatch):
     src = b.make_sources(cfg, None, LLM(), None, date(2026, 10, 10), _settings())
     await src.weather()
     assert asked["day"] == date(2026, 10, 10)
+
+
+def _rainy():
+    return WeatherInfo(DayWeather(15, 22, 16, 18, 70, 10, rain_hours=(14, 15)), "Şemsiye al.", ["şemsiye al"])
+
+
+async def test_tasks_section_in_morning():
+    src = _src(tasks=_ok("📝 Fizik — 10.10 cumartesi (yarın) #1"))
+    b = await build(date(2026, 10, 9), src, _settings())
+    assert "📌 Ödev ve sınavlar\n📝 Fizik" in b.text
+    assert b.text.index("📚") < b.text.index("📌") < b.text.index("💱")
+
+
+async def test_evening_header_and_sections():
+    src = _src(tasks=_ok("yok"), finance=_boom, news=_boom)
+    b = await build(date(2026, 10, 10), src, _settings(), evening=True)
+    assert b.text.startswith("🌙 İyi geceler Kayra! Yarın 10 Ekim Cumartesi")
+    assert "💱" not in b.text and "📰" not in b.text and "📌" in b.text and "📚" in b.text
+
+
+async def test_rain_alert_right_after_header():
+    b = await build(date(2026, 10, 10), _src(weather=_ok(_rainy()), tasks=_ok("yok")), _settings(), evening=True)
+    lines = b.text.split("\n\n")
+    assert lines[1].startswith("☔ Yağmur bekleniyor: 14:00–16:00")
+    assert b.text_without_weather.split("\n\n")[1].startswith("☔")
+
+
+async def test_tasks_source_relative_to_reference_day():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app import briefing as bmod
+
+    db = SimpleNamespace(tasks_due_between=AsyncMock(return_value=[{"id": 1, "kind": "odev", "title": "Fizik", "due": date(2026, 10, 10), "done": False}]))
+    src = bmod.make_sources(SimpleNamespace(), db, None, None, date(2026, 10, 10), _settings(), ref_day=date(2026, 10, 9))
+    assert "(yarın)" in await src.tasks()
+    assert db.tasks_due_between.await_args.args == (date(2026, 10, 10), date(2026, 10, 17))

@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import date, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS reminders (
     text TEXT NOT NULL,
     due_at TIMESTAMPTZ NOT NULL,
     sent BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('odev', 'sinav')),
+    title TEXT NOT NULL,
+    due DATE NOT NULL,
+    done BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -104,6 +112,32 @@ class DB:
 
     async def delete_note(self, note_id: int) -> bool:
         result = await self.pool.execute("DELETE FROM notes WHERE id = $1", note_id)
+        return result.endswith(" 1")
+
+    async def add_task(self, kind: str, title: str, due: date) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO tasks (kind, title, due) VALUES ($1, $2, $3) RETURNING id", kind, title, due
+        )
+
+    async def list_tasks(self, include_done: bool = False) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, kind, title, due, done FROM tasks WHERE $1 OR NOT done ORDER BY done, due, id", include_done
+        )
+        return [dict(r) for r in rows]
+
+    async def tasks_due_between(self, start: date, end: date) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, kind, title, due, done FROM tasks WHERE NOT done AND due BETWEEN $1 AND $2 ORDER BY due, id",
+            start, end,
+        )
+        return [dict(r) for r in rows]
+
+    async def set_task_done(self, task_id: int, done: bool) -> bool:
+        result = await self.pool.execute("UPDATE tasks SET done = $2 WHERE id = $1", task_id, done)
+        return result.endswith(" 1")
+
+    async def delete_task(self, task_id: int) -> bool:
+        result = await self.pool.execute("DELETE FROM tasks WHERE id = $1", task_id)
         return result.endswith(" 1")
 
     async def add_reminder(self, text: str, due_at: datetime) -> int:
