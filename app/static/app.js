@@ -47,9 +47,8 @@
   }
 
   function esc(text) {
-    const d = document.createElement("div");
-    d.textContent = text;
-    return d.innerHTML;
+    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+    return String(text).replace(/[&<>"']/g, (c) => map[c]);
   }
 
   const fmtTime = (iso) => new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: TZ });
