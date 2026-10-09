@@ -211,3 +211,19 @@ async def test_preview_targets_next_briefing_day(monkeypatch, hour, expected):
     async with TestClient(TestServer(build_web_app(_tg()))) as c:
         data = await (await c.get("/api/briefing/preview", headers=_auth())).json()
     assert asked["day"].isoformat() == expected and data["text"] == "metin"
+
+
+async def test_send_now_sends_next_briefing_day(monkeypatch):
+    from app import bot as bot_mod
+    from app import web as web_mod
+
+    asked = {}
+
+    async def fake_send(context, day=None):
+        asked["day"] = day
+
+    monkeypatch.setattr(bot_mod, "send_briefing", fake_send)
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 10, 9, 22, 27, tzinfo=tz))
+    async with TestClient(TestServer(build_web_app(_tg()))) as c:
+        assert (await c.post("/api/briefing/send", headers=_auth())).status == 200
+    assert asked["day"].isoformat() == "2026-10-10"

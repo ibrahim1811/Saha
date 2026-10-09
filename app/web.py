@@ -113,6 +113,11 @@ def _now(tz) -> datetime:
     return datetime.now(tz)
 
 
+async def _next_day(d):
+    s = await bot.load_settings(d)
+    return bot.next_briefing_day(_now(d["cfg"].tz), s["briefing_time"])
+
+
 async def get_weather(request):
     d = _data(request)
     now = _now(d["cfg"].tz)
@@ -196,10 +201,7 @@ async def delete_reminder(request):
 
 async def preview(request):
     d = _data(request)
-    now = _now(d["cfg"].tz)
-    s_now = await bot.load_settings(d)
-    hour, minute = map(int, s_now["briefing_time"].split(":"))
-    today = now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
+    today = await _next_day(d)
     result, s = await bot.build_briefing(d, today)
     image = None
     if s["photo_card"] and result.weather:
@@ -214,7 +216,7 @@ async def preview(request):
 
 async def send_now(request):
     tg = _tg(request)
-    await bot.send_briefing(SimpleNamespace(bot=tg.bot, bot_data=tg.bot_data))
+    await bot.send_briefing(SimpleNamespace(bot=tg.bot, bot_data=tg.bot_data), await _next_day(tg.bot_data))
     return _json({"ok": True})
 
 

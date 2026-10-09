@@ -236,3 +236,48 @@ async def test_pending_photos_capped():
         await botmod.photo(_photo_update(b"x", 300 + i), ctx)
     pending = ctx.user_data["pending"]
     assert len(pending) == botmod.MAX_PENDING_PHOTOS and 300 not in pending and 312 in pending
+
+
+from datetime import date, datetime as _dt
+
+
+@pytest.mark.parametrize("hour,minute,expected", [(6, 59, date(2026, 10, 9)), (7, 0, date(2026, 10, 10)), (22, 27, date(2026, 10, 10))])
+def test_next_briefing_day(hour, minute, expected):
+    assert botmod.next_briefing_day(_dt(2026, 10, 9, hour, minute, tzinfo=TZ), "07:00") == expected
+
+
+async def test_send_briefing_uses_given_day(monkeypatch):
+    asked = {}
+
+    async def fake_build(bot_data, day):
+        asked["day"] = day
+        return RESULT, {"photo_card": False}
+
+    monkeypatch.setattr(botmod, "build_briefing", fake_build)
+    ctx = _brief_ctx()
+    await botmod.send_briefing(ctx, date(2026, 10, 10))
+    assert asked["day"] == date(2026, 10, 10)
+
+
+async def test_scheduled_job_sends_today(monkeypatch):
+    asked = {}
+
+    async def fake_build(bot_data, day):
+        asked["day"] = day
+        return RESULT, {"photo_card": False}
+
+    monkeypatch.setattr(botmod, "build_briefing", fake_build)
+    await botmod.send_briefing(_brief_ctx())
+    assert asked["day"] == _dt.now(TZ).date()
+
+
+async def test_ozet_command_sends_next_briefing_day(monkeypatch):
+    asked = {}
+
+    async def fake_send(context, day=None):
+        asked["day"] = day
+
+    monkeypatch.setattr(botmod, "send_briefing", fake_send)
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 9, 22, 27, tzinfo=TZ))
+    await botmod.ozet(SimpleNamespace(), _brief_ctx())
+    assert asked["day"] == date(2026, 10, 10)

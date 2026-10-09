@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
@@ -120,10 +120,15 @@ def photo_caption(info: briefing.WeatherInfo) -> str:
     return f"🌤 Buca — {weather.summary(info.w)}\n👕 {info.advice}"[:1024]
 
 
-async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
+def next_briefing_day(now: datetime, briefing_time: str) -> date:
+    hour, minute = map(int, briefing_time.split(":"))
+    return now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
+
+
+async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None) -> None:
     d = _deps(context)
     owner = d["cfg"].owner_id
-    today = _now(context).date()
+    today = day or _now(context).date()
     result, s = await build_briefing(d, today)
     if s["photo_card"] and result.weather:
         try:
@@ -138,7 +143,8 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def ozet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await send_briefing(context)
+    s = await load_settings(_deps(context))
+    await send_briefing(context, next_briefing_day(_now(context), s["briefing_time"]))
 
 
 async def program(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
