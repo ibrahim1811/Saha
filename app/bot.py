@@ -41,6 +41,12 @@ CONFIRM_BUTTONS = InlineKeyboardMarkup([[
     InlineKeyboardButton("✅ Kaydet", callback_data="save"),
     InlineKeyboardButton("🔁 Tekrar oku", callback_data="retry"),
 ]])
+MAX_PENDING_PHOTOS = 10
+MERGE_BUTTONS = InlineKeyboardMarkup([
+    [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
+    [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
+    [InlineKeyboardButton("🔁 Tekrar oku", callback_data="retry")],
+])
 
 
 def _deps(context):
@@ -152,41 +158,65 @@ async def notlar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     file = await update.message.photo[-1].get_file()
-    context.user_data["photo"] = bytes(await file.download_as_bytearray())
-    await update.message.reply_text("Bu hangi program?", reply_markup=KIND_BUTTONS)
+    data = bytes(await file.download_as_bytearray())
+    sent = await update.message.reply_text("Bu hangi program?", reply_markup=KIND_BUTTONS)
+    pending = context.user_data.setdefault("pending", {})
+    pending[sent.message_id] = {"photo": data}
+    while len(pending) > MAX_PENDING_PHOTOS:
+        pending.pop(next(iter(pending)))
 
 
-async def _read_and_preview(query, context) -> None:
-    kind, day = context.user_data["kind"]
+async def _read_and_preview(query, context, item: dict) -> None:
+    kind, day = item["kind"]
     await query.edit_message_text("Okuyorum… ⏳")
     try:
-        data = await schedule.read_photo(context.user_data["photo"], kind, _deps(context)["llm"])
+        data = await schedule.read_photo(item["photo"], kind, _deps(context)["llm"])
     except Exception:
         log.exception("Program fotoğrafı okunamadı")
         await query.edit_message_text("Programı okuyamadım, daha net bir fotoğraf atar mısın?")
         return
-    context.user_data["parsed"] = data
-    preview = schedule.format_okul(data) if kind == "okul" else schedule.format_lessons(data)
-    await query.edit_message_text(f"Şunu okudum:\n\n{preview[:3800]}\n\nDoğru mu?", reply_markup=CONFIRM_BUTTONS)
+    item["parsed"] = data
+    existing = await _deps(context)["db"].get_schedule(kind, day)
+    if existing:
+        note = "Bu gün için kayıtlı program var. Yeni dersleri saatine göre ekleyebilir ya da eskisinin yerine koyabilirim."
+        markup = MERGE_BUTTONS
+    else:
+        note = "Doğru mu?"
+        markup = CONFIRM_BUTTONS
+    await query.edit_message_text(f"Şunu okudum:\n\n{_format(kind, data)[:3500]}\n\n{note}", reply_markup=markup)
+
+
+def _format(kind: str, data) -> str:
+    return schedule.format_okul(data) if kind == "okul" else schedule.format_lessons(data)
+
+
+def _merge(kind: str, old, new):
+    return schedule.merge_okul(old, new) if kind == "okul" else schedule.merge_lessons(old, new)
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    if "photo" not in context.user_data:
-        await query.edit_message_text("Fotoğraf bulunamadı, tekrar atar mısın?")
+    pending = context.user_data.setdefault("pending", {})
+    item = pending.get(query.message.message_id)
+    if item is None:
+        await query.edit_message_text("Bu fotoğrafı artık bulamıyorum, tekrar atar mısın?")
         return
     if query.data.startswith("kind:"):
         _, kind, day = query.data.split(":")
-        context.user_data["kind"] = (kind, day)
-        await _read_and_preview(query, context)
-    elif query.data == "retry":
-        await _read_and_preview(query, context)
-    elif query.data == "save":
-        kind, day = context.user_data["kind"]
-        await _deps(context)["db"].save_schedule(kind, day, context.user_data["parsed"])
-        context.user_data.clear()
-        await query.edit_message_text("✅ Program kaydedildi.")
+        item["kind"] = (kind, day)
+        await _read_and_preview(query, context, item)
+    elif query.data == "retry" and "kind" in item:
+        await _read_and_preview(query, context, item)
+    elif query.data in ("save", "merge") and "parsed" in item:
+        kind, day = item["kind"]
+        db = _deps(context)["db"]
+        old = await db.get_schedule(kind, day) if query.data == "merge" else None
+        result = _merge(kind, old, item["parsed"])
+        await db.save_schedule(kind, day, result)
+        pending.pop(query.message.message_id, None)
+        title = "➕ Mevcut programa eklendi, saatine göre sıralandı:" if query.data == "merge" else "✅ Program kaydedildi:"
+        await query.edit_message_text(f"{title}\n\n{_format(kind, result)[:3800]}")
 
 
 async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -146,3 +146,93 @@ async def test_panel_command_without_url():
     ctx.bot_data["cfg"].public_url = None
     await botmod.panel(update, ctx)
     assert "adres" in update.message.reply_text.await_args.args[0]
+
+
+def _query_update(data, message_id=100):
+    query = SimpleNamespace(data=data, answer=AsyncMock(), edit_message_text=AsyncMock(), message=SimpleNamespace(message_id=message_id))
+    return SimpleNamespace(callback_query=query)
+
+
+def _photo_ctx(existing, parsed, kind=("dershane", "cumartesi")):
+    db = SimpleNamespace(get_schedule=AsyncMock(return_value=existing), save_schedule=AsyncMock())
+    return SimpleNamespace(
+        user_data={"pending": {100: {"photo": b"img", "kind": kind, "parsed": parsed}}},
+        bot_data={"cfg": SimpleNamespace(owner_id=42, tz=TZ), "db": db, "llm": FakeLLM(reply=json.dumps(parsed))},
+    )
+
+
+import json
+
+FIRST = [{"saat": "13:30-15:10", "ders": "TYT Mat"}]
+SECOND = [{"saat": "15:50-17:20", "ders": "TYT Fizik"}]
+
+
+async def test_preview_offers_merge_when_schedule_exists():
+    ctx = _photo_ctx(FIRST, SECOND)
+    update = _query_update("kind:dershane:cumartesi")
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    datas = [b.callback_data for row in markup.inline_keyboard for b in row]
+    assert "merge" in datas and "save" in datas
+
+
+async def test_preview_without_existing_offers_plain_save():
+    ctx = _photo_ctx(None, SECOND)
+    update = _query_update("kind:dershane:cumartesi")
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    assert "merge" not in [b.callback_data for row in markup.inline_keyboard for b in row]
+
+
+async def test_merge_button_saves_sorted_union():
+    ctx = _photo_ctx(SECOND, FIRST)
+    update = _query_update("merge")
+    await botmod.on_button(update, ctx)
+    saved = ctx.bot_data["db"].save_schedule.await_args.args
+    assert saved[:2] == ("dershane", "cumartesi")
+    assert [l["ders"] for l in saved[2]] == ["TYT Mat", "TYT Fizik"]
+    assert "TYT Mat" in update.callback_query.edit_message_text.await_args.args[0]
+
+
+
+class _File:
+    def __init__(self, data):
+        self.data = data
+
+    async def download_as_bytearray(self):
+        return bytearray(self.data)
+
+
+def _photo_update(data, reply_id):
+    size = SimpleNamespace(get_file=AsyncMock(return_value=_File(data)))
+    message = SimpleNamespace(photo=[size], reply_text=AsyncMock(return_value=SimpleNamespace(message_id=reply_id)))
+    return SimpleNamespace(message=message)
+
+
+async def test_two_photos_each_button_reads_its_own_photo():
+    llm = FakeLLM(reply=json.dumps(FIRST))
+    db = SimpleNamespace(get_schedule=AsyncMock(return_value=None), save_schedule=AsyncMock())
+    ctx = SimpleNamespace(user_data={}, bot_data={"cfg": SimpleNamespace(owner_id=42, tz=TZ), "db": db, "llm": llm})
+    await botmod.photo(_photo_update(b"birinci", 201), ctx)
+    await botmod.photo(_photo_update(b"ikinci", 202), ctx)
+    await botmod.on_button(_query_update("kind:dershane:cumartesi", 201), ctx)
+    assert llm.calls[-1]["image"] == b"birinci"
+    await botmod.on_button(_query_update("kind:dershane:cumartesi", 202), ctx)
+    assert llm.calls[-1]["image"] == b"ikinci"
+    await botmod.on_button(_query_update("save", 201), ctx)
+    assert 201 not in ctx.user_data["pending"] and 202 in ctx.user_data["pending"]
+
+
+async def test_button_on_unknown_message_asks_to_resend():
+    ctx = SimpleNamespace(user_data={}, bot_data={})
+    update = _query_update("save", 999)
+    await botmod.on_button(update, ctx)
+    assert "tekrar" in update.callback_query.edit_message_text.await_args.args[0]
+
+
+async def test_pending_photos_capped():
+    ctx = SimpleNamespace(user_data={}, bot_data={})
+    for i in range(botmod.MAX_PENDING_PHOTOS + 3):
+        await botmod.photo(_photo_update(b"x", 300 + i), ctx)
+    pending = ctx.user_data["pending"]
+    assert len(pending) == botmod.MAX_PENDING_PHOTOS and 300 not in pending and 312 in pending

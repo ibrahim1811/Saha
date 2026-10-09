@@ -1,3 +1,4 @@
+import re
 from datetime import date
 
 WEEKDAYS = ["pazartesi", "salı", "çarşamba", "perşembe", "cuma"]
@@ -7,11 +8,11 @@ ALL_DAYS = WEEKDAYS + WEEKEND
 OKUL_PROMPT = (
     "Bu bir haftalık okul ders programı fotoğrafı. Sadece JSON döndür, başka bir şey yazma. Biçim: "
     '{"pazartesi": [{"saat": "08:30", "ders": "Matematik"}], "salı": [], "çarşamba": [], "perşembe": [], "cuma": []}. '
-    "Ders sırasını koru. Saat okunamıyorsa boş string yaz. Boş günler için boş liste ver."
+    "Ders sırasını koru. Saati görünüyorsa başlangıç-bitiş olarak yaz (örn. 08:30-09:10), sadece başlangıç varsa onu yaz, okunamıyorsa boş string. Boş günler için boş liste ver."
 )
 DERSHANE_PROMPT = (
     "Bu tek bir günün dershane ders programı fotoğrafı. Sadece JSON dizi döndür, başka bir şey yazma. Biçim: "
-    '[{"saat": "09:00", "ders": "Fizik"}]. Ders sırasını koru. Saat okunamıyorsa boş string yaz.'
+    '[{"saat": "13:30-15:10", "ders": "Fizik"}]. Ders sırasını koru. Saati görünüyorsa başlangıç-bitiş olarak yaz, sadece başlangıç varsa onu yaz, okunamıyorsa boş string.'
 )
 
 
@@ -50,6 +51,31 @@ async def read_photo(image: bytes, kind: str, llm):
     if kind == "okul":
         return validate_okul(await llm.ask_json(OKUL_PROMPT, image=image))
     return validate_dershane(await llm.ask_json(DERSHANE_PROMPT, image=image))
+
+
+def start_minutes(saat: str) -> int | None:
+    m = re.search(r"(\d{1,2})[:.](\d{2})", saat or "")
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def merge_lessons(old, new) -> list[dict]:
+    combined = list(old or [])
+    seen = {(l["saat"], l["ders"].casefold()) for l in combined}
+    for lesson in new:
+        if (lesson["saat"], lesson["ders"].casefold()) not in seen:
+            combined.append(lesson)
+            seen.add((lesson["saat"], lesson["ders"].casefold()))
+    order = {id(l): i for i, l in enumerate(combined)}
+
+    def key(lesson):
+        minutes = start_minutes(lesson["saat"])
+        return (0, minutes, order[id(lesson)]) if minutes is not None else (1, 0, order[id(lesson)])
+
+    return sorted(combined, key=key)
+
+
+def merge_okul(old, new: dict) -> dict:
+    return {d: merge_lessons((old or {}).get(d, []), new.get(d, [])) for d in WEEKDAYS}
 
 
 def day_key(d: date) -> str:

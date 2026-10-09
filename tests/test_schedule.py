@@ -78,3 +78,36 @@ async def test_read_photo_dershane():
 async def test_read_photo_okul_unreadable_raises():
     with pytest.raises(Exception):
         await read_photo(b"img", "okul", FakeLLM(reply="Fotoğraf çok bulanık."))
+
+
+from app.schedule import merge_lessons, merge_okul, start_minutes
+
+
+@pytest.mark.parametrize("saat,expected", [("15:50", 950), ("9.30", 570), ("15:50-16:30", 950), ("08:30 - 09:10", 510), ("", None), ("öğle", None)])
+def test_start_minutes(saat, expected):
+    assert start_minutes(saat) == expected
+
+
+def test_merge_sorts_by_start_time():
+    first = [{"saat": "13:30-14:10", "ders": "Fizik"}, {"saat": "14:30-15:10", "ders": "Kimya"}]
+    second = [{"saat": "15:50-16:30", "ders": "Biyoloji"}, {"saat": "09:00-09:40", "ders": "Mat"}]
+    assert [l["ders"] for l in merge_lessons(first, second)] == ["Mat", "Fizik", "Kimya", "Biyoloji"]
+
+
+def test_merge_skips_duplicates_and_keeps_timeless_last():
+    old = [{"saat": "10:00", "ders": "Türkçe"}, {"saat": "", "ders": "Etüt"}]
+    new = [{"saat": "10:00", "ders": "Türkçe"}, {"saat": "09:00", "ders": "Mat"}]
+    assert merge_lessons(old, new) == [{"saat": "09:00", "ders": "Mat"}, {"saat": "10:00", "ders": "Türkçe"}, {"saat": "", "ders": "Etüt"}]
+
+
+def test_merge_with_nothing_sorts_new():
+    assert [l["ders"] for l in merge_lessons(None, [{"saat": "11:00", "ders": "B"}, {"saat": "08:00", "ders": "A"}])] == ["A", "B"]
+
+
+def test_merge_okul_per_day():
+    old = {**{d: [] for d in ["pazartesi", "salı", "çarşamba", "perşembe", "cuma"]}, "pazartesi": [{"saat": "08:30", "ders": "Mat"}]}
+    new = {**{d: [] for d in ["pazartesi", "salı", "çarşamba", "perşembe", "cuma"]}, "pazartesi": [{"saat": "13:00", "ders": "Fizik"}], "cuma": [{"saat": "09:00", "ders": "Tarih"}]}
+    out = merge_okul(old, new)
+    assert [l["ders"] for l in out["pazartesi"]] == ["Mat", "Fizik"]
+    assert out["cuma"] == [{"saat": "09:00", "ders": "Tarih"}]
+    assert merge_okul(None, new)["cuma"][0]["ders"] == "Tarih"
