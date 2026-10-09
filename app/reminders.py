@@ -22,8 +22,7 @@ def parse_result(data, now: datetime) -> tuple[datetime, str]:
         raise ReminderError("Ne zaman hatırlatacağımı anlayamadım") from e
     if not text:
         raise ReminderError("Neyi hatırlatacağımı anlayamadım")
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=now.tzinfo)
+    when = when.replace(tzinfo=now.tzinfo)
     if when <= now:
         raise ReminderError(f"Bu zaman geçmişte: {format_when(when.astimezone(now.tzinfo))}")
     return when, text

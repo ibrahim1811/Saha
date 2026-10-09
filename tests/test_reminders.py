@@ -16,9 +16,9 @@ def test_naive_time_gets_local_tz():
     assert text == "faturayı öde"
 
 
-def test_aware_time_kept():
-    when, _ = parse_result({"when": "2026-10-10T12:00+00:00", "text": "x"}, NOW)
-    assert when.astimezone(TZ).hour == 15
+def test_llm_offset_ignored_wall_clock_kept():
+    when, _ = parse_result({"when": "2026-10-10T15:00Z", "text": "x"}, NOW)
+    assert when == datetime(2026, 10, 10, 15, 0, tzinfo=TZ)
 
 
 def test_past_rejected():

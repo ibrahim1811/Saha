@@ -71,3 +71,21 @@ async def test_http_error_raises_llm_error():
     llm = _llm(lambda r: httpx.Response(401, json={"error": {"message": "Invalid API Key"}}))
     with pytest.raises(LLMError, match="401"):
         await llm.ask("x")
+
+
+def test_json_followed_by_prose_with_brackets():
+    assert extract_json('Here: {"a": 1} (note [x])') == {"a": 1}
+    assert extract_json('{"when": "x"} {extra}') == {"when": "x"}
+
+
+async def test_transport_error_wrapped():
+    def handler(request):
+        raise httpx.ConnectTimeout("timeout")
+
+    with pytest.raises(LLMError):
+        await _llm(handler).ask("x")
+
+
+async def test_bad_response_shape_wrapped():
+    with pytest.raises(LLMError):
+        await _llm(lambda r: httpx.Response(200, json={"unexpected": True})).ask("x")

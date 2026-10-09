@@ -7,10 +7,15 @@ from telegram.ext import (
     TypeHandler, filters,
 )
 
+from telegram.error import Conflict, NetworkError
+
 from app import briefing, chat, reminders, schedule
+from app.llm import LLMError
 from app.textutil import split_message
 
 log = logging.getLogger(__name__)
+
+LLM_DOWN = "⚠️ Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener misin?"
 
 HELP = (
     "Merhaba Kayra! Yapabileceklerim:\n"
@@ -167,6 +172,10 @@ async def _create_reminder(update: Update, context, message: str) -> None:
     except reminders.ReminderError as e:
         await update.message.reply_text(f"⚠️ {e}")
         return
+    except LLMError:
+        log.exception("Hatırlatıcı LLM ile ayrıştırılamadı")
+        await update.message.reply_text(LLM_DOWN)
+        return
     reminder_id = await d["db"].add_reminder(text, when)
     schedule_reminder(context.job_queue, reminder_id, when, text)
     await update.message.reply_text(f"⏰ Tamam! {reminders.format_when(when)} — {text} (#{reminder_id})")
@@ -207,11 +216,19 @@ async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     d = _deps(context)
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
-    reply = await chat.answer(message, d["db"], d["llm"], _now(context))
+    try:
+        reply = await chat.answer(message, d["db"], d["llm"], _now(context))
+    except LLMError:
+        log.exception("Sohbet cevabı alınamadı")
+        await update.message.reply_text(LLM_DOWN)
+        return
     await send_text(context.bot, update.effective_chat.id, reply)
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if isinstance(context.error, (Conflict, NetworkError)):
+        log.warning("Telegram bağlantı/polling hatası: %s", context.error)
+        return
     log.error("Beklenmeyen hata", exc_info=context.error)
     try:
         await context.bot.send_message(context.bot_data["cfg"].owner_id, f"⚠️ Bir hata oldu: {context.error}")

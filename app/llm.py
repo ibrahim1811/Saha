@@ -13,15 +13,14 @@ def extract_json(text: str):
     fenced = re.search(r"```(?:json)?\s*(.*?)```", text, re.S)
     if fenced:
         text = fenced.group(1)
-    starts = [i for i in (text.find("{"), text.find("[")) if i != -1]
-    if not starts:
-        raise LLMError(f"JSON bulunamadı: {text[:200]}")
-    start = min(starts)
-    end = max(text.rfind("}"), text.rfind("]"))
-    try:
-        return json.loads(text[start : end + 1])
-    except json.JSONDecodeError as e:
-        raise LLMError(f"Geçersiz JSON: {e}") from e
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch in "{[":
+            try:
+                return decoder.raw_decode(text, i)[0]
+            except json.JSONDecodeError:
+                continue
+    raise LLMError(f"JSON bulunamadı: {text[:200]}")
 
 
 class LLM:
@@ -45,15 +44,21 @@ class LLM:
             "max_tokens": max_tokens,
             "temperature": 0.3,
         }
-        resp = await self.http.post(
-            f"{self.base_url}/chat/completions",
-            json=body,
-            headers={"Authorization": f"Bearer {self.api_key}"},
-            timeout=30,
-        )
+        try:
+            resp = await self.http.post(
+                f"{self.base_url}/chat/completions",
+                json=body,
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=30,
+            )
+        except httpx.HTTPError as e:
+            raise LLMError(f"LLM API'ye ulaşılamadı: {e!r}") from e
         if resp.status_code != 200:
             raise LLMError(f"LLM API hatası {resp.status_code}: {resp.text[:300]}")
-        return resp.json()["choices"][0]["message"]["content"] or ""
+        try:
+            return resp.json()["choices"][0]["message"]["content"] or ""
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise LLMError(f"LLM yanıtı beklenmeyen biçimde: {resp.text[:300]}") from e
 
     async def ask_json(self, prompt: str, system: str = "", image: bytes | None = None):
         return extract_json(await self.ask(prompt, system, image))

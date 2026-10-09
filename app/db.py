@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import asyncpg
 
@@ -28,13 +29,19 @@ CREATE TABLE IF NOT EXISTS reminders (
 """
 
 
+def clean_dsn(url: str) -> str:
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k != "channel_binding"]
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
+
 class DB:
     def __init__(self, pool: asyncpg.Pool):
         self.pool = pool
 
     @classmethod
     async def connect(cls, url: str) -> "DB":
-        pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+        pool = await asyncpg.create_pool(clean_dsn(url), min_size=1, max_size=5)
         await pool.execute(SCHEMA)
         return cls(pool)
 
