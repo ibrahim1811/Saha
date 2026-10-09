@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS reminders (
     sent BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL
+);
 """
 
 
@@ -66,6 +70,21 @@ class DB:
             "pazar": await self.get_schedule("dershane", "pazar"),
         }
 
+    async def delete_schedule(self, kind: str, day: str = "") -> bool:
+        result = await self.pool.execute("DELETE FROM schedules WHERE kind = $1 AND day = $2", kind, day)
+        return result.endswith(" 1")
+
+    async def get_settings(self) -> dict | None:
+        raw = await self.pool.fetchval("SELECT value FROM settings WHERE key = 'main'")
+        return json.loads(raw) if raw is not None else None
+
+    async def save_settings(self, value: dict) -> None:
+        await self.pool.execute(
+            "INSERT INTO settings (key, value) VALUES ('main', $1::jsonb) "
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+            json.dumps(value, ensure_ascii=False),
+        )
+
     async def add_note(self, text: str, source: str) -> int:
         return await self.pool.fetchval("INSERT INTO notes (text, source) VALUES ($1, $2) RETURNING id", text, source)
 
@@ -74,6 +93,18 @@ class DB:
             "SELECT id, text, created_at FROM notes ORDER BY created_at DESC, id DESC LIMIT $1", limit
         )
         return [dict(r) for r in rows]
+
+    async def search_notes(self, query: str, limit: int = 100) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, text, source, created_at FROM notes WHERE text ILIKE '%' || $1 || '%' "
+            "ORDER BY created_at DESC, id DESC LIMIT $2",
+            query.strip(), limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def delete_note(self, note_id: int) -> bool:
+        result = await self.pool.execute("DELETE FROM notes WHERE id = $1", note_id)
+        return result.endswith(" 1")
 
     async def add_reminder(self, text: str, due_at: datetime) -> int:
         return await self.pool.fetchval(

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL yok")
 @pytest.fixture
 async def db():
     d = await DB.connect(URL)
-    await d.pool.execute("TRUNCATE schedules, notes, reminders RESTART IDENTITY")
+    await d.pool.execute("TRUNCATE schedules, notes, reminders, settings RESTART IDENTITY")
     yield d
     await d.close()
 
@@ -38,3 +38,26 @@ async def test_reminders(db):
     assert await db.pending_reminders() == []
     assert await db.delete_reminder(rid) is True
     assert await db.delete_reminder(rid) is False
+
+
+async def test_settings_roundtrip(db):
+    assert await db.get_settings() is None
+    await db.save_settings({"briefing_time": "08:00"})
+    await db.save_settings({"briefing_time": "09:00"})
+    assert await db.get_settings() == {"briefing_time": "09:00"}
+
+
+async def test_search_and_delete_notes(db):
+    a = await db.add_note("Süt al", "ses")
+    await db.add_note("Ahmet'i ara", "ses")
+    assert [n["text"] for n in await db.search_notes("süt")] == ["Süt al"]
+    assert len(await db.search_notes("")) == 2
+    assert await db.delete_note(a) is True
+    assert await db.delete_note(a) is False
+
+
+async def test_delete_schedule(db):
+    await db.save_schedule("dershane", "pazar", [{"saat": "", "ders": "Mat"}])
+    assert await db.delete_schedule("dershane", "pazar") is True
+    assert await db.get_schedule("dershane", "pazar") is None
+    assert await db.delete_schedule("dershane", "pazar") is False
