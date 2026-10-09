@@ -1,7 +1,7 @@
 import base64
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 
 STATIC = Path(__file__).resolve().parent / "static"
 DERSHANE_DAYS = ("cumartesi", "pazar")
+TOMORROW_FROM_HOUR = 18
 TG_APP = web.AppKey("tg", object)
 
 
@@ -108,10 +109,17 @@ async def status(request):
     })
 
 
+def _now(tz) -> datetime:
+    return datetime.now(tz)
+
+
 async def get_weather(request):
     d = _data(request)
-    w = await weather.fetch(d["cfg"].lat, d["cfg"].lon, d["cfg"].tz.key, d["http"])
-    return _json({**asdict(w), "label": weather.CONDITION_TR.get(w.condition, "")})
+    now = _now(d["cfg"].tz)
+    is_tomorrow = now.hour >= TOMORROW_FROM_HOUR
+    day = now.date() + timedelta(days=1) if is_tomorrow else now.date()
+    w = await weather.fetch(d["cfg"].lat, d["cfg"].lon, d["cfg"].tz.key, d["http"], day)
+    return _json({**asdict(w), "label": weather.CONDITION_TR.get(w.condition, ""), "day": day, "is_tomorrow": is_tomorrow})
 
 
 async def get_settings(request):
@@ -188,7 +196,10 @@ async def delete_reminder(request):
 
 async def preview(request):
     d = _data(request)
-    today = datetime.now(d["cfg"].tz).date()
+    now = _now(d["cfg"].tz)
+    s_now = await bot.load_settings(d)
+    hour, minute = map(int, s_now["briefing_time"].split(":"))
+    today = now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
     result, s = await bot.build_briefing(d, today)
     image = None
     if s["photo_card"] and result.weather:

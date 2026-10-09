@@ -109,3 +109,70 @@ async def test_fetch_both_fail_raises(monkeypatch):
     monkeypatch.setattr(weather, "RETRY_DELAY", 0)
     with pytest.raises(Exception):
         await weather.fetch(38.39, 27.17, "Europe/Istanbul", _client(lambda r: httpx.Response(503)))
+
+
+def _om2():
+    today = [10.0] * 24
+    tomorrow = [15, 15, 15, 15, 15, 15, 15, 15, 16, 19, 22, 24, 26, 28, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20]
+    return {
+        "hourly": {"temperature_2m": today + [float(t) for t in tomorrow]},
+        "daily": {
+            "temperature_2m_min": [9.0, 15.0],
+            "temperature_2m_max": [12.0, 29.0],
+            "precipitation_probability_max": [0, 10],
+            "wind_speed_10m_max": [5.0, 12.0],
+            "weather_code": [0, 2],
+        },
+    }
+
+
+def test_openmeteo_second_day():
+    w = parse_openmeteo(_om2(), 1)
+    assert (w.t_min, w.t_max, w.t_morning, w.t_evening) == (15.0, 29.0, 16.0, 24.0)
+    assert w.hourly[14] == 29.0 and w.condition == "partly"
+
+
+async def test_fetch_tomorrow_openmeteo(monkeypatch):
+    weather._CACHE.clear()
+    monkeypatch.setattr(weather, "_today", lambda tz: date(2026, 10, 9))
+    seen = {}
+
+    def handler(request):
+        seen["days"] = request.url.params["forecast_days"]
+        return httpx.Response(200, json=_om2())
+
+    w = await weather.fetch(38.39, 27.17, "Europe/Istanbul", _client(handler), date(2026, 10, 10))
+    assert seen["days"] == "2" and w.t_max == 29.0
+
+
+async def test_fetch_tomorrow_metno_fallback(monkeypatch):
+    weather._CACHE.clear()
+    monkeypatch.setattr(weather, "RETRY_DELAY", 0)
+    monkeypatch.setattr(weather, "_today", lambda tz: date(2026, 10, 9))
+
+    def handler(request):
+        if request.url.host == "api.open-meteo.com":
+            return httpx.Response(429)
+        return httpx.Response(200, json=_metno())
+
+    w = await weather.fetch(38.39, 27.17, "Europe/Istanbul", _client(handler), date(2026, 10, 10))
+    assert w.t_max == 33.0
+
+
+async def test_fetch_caches_success(monkeypatch):
+    weather._CACHE.clear()
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(200, json=_om())
+
+    c = _client(handler)
+    await weather.fetch(38.39, 27.17, "Europe/Istanbul", c)
+    await weather.fetch(38.39, 27.17, "Europe/Istanbul", c)
+    assert len(calls) == 1
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    weather._CACHE.clear()

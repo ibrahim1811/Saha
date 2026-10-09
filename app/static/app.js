@@ -149,10 +149,12 @@
 
     api("GET", "/api/weather")
       .then((w) => {
+        const dayText = fmtDate(w.day + "T12:00:00+03:00");
+        $("sky-date").textContent = w.is_tomorrow ? `Yarın, ${dayText}` : dayText;
         $("sky").dataset.cond = w.condition;
         $("sky-temp").textContent = Math.round(w.t_max) + "°";
-        $("sky-cond").textContent = w.label || "Bugün";
-        $("sky-range").textContent = `En düşük ${Math.round(w.t_min)}°, yağış %${w.rain_prob}`;
+        $("sky-cond").textContent = w.label || (w.is_tomorrow ? "Yarın" : "Bugün");
+        $("sky-range").textContent = `Sabah ${Math.round(w.t_morning)}°, akşam ${Math.round(w.t_evening)}°, yağış %${w.rain_prob}`;
         if (w.hourly.length === 24) skyLine(w.hourly);
       })
       .catch(() => {

@@ -27,3 +27,12 @@ def test_all_conditions_render():
     for cond in ["clear", "partly", "cloudy", "fog", "rain", "storm", "snow", "weird"]:
         w = DayWeather(5, 9, 6, 8, 80, 40, tuple([7.0] * 24), cond)
         assert render_card(w, ["ceket al"], date(2026, 1, 1))[:4] == b"\x89PNG"
+
+
+def test_turkish_capitalize():
+    from app.card import tr_capitalize
+
+    assert tr_capitalize("ince ve açık renkli giyin") == "İnce ve açık renkli giyin"
+    assert tr_capitalize("ılık") == "Ilık"
+    assert tr_capitalize("ceket al") == "Ceket al"
+    assert tr_capitalize("") == ""

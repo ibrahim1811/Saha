@@ -160,7 +160,7 @@ async def test_weather_endpoint(monkeypatch):
     from app import weather as weather_mod
     from app.weather import DayWeather
 
-    async def fake_fetch(lat, lon, tz, http):
+    async def fake_fetch(lat, lon, tz, http, day=None):
         return DayWeather(11, 27, 12, 22, 10, 9, tuple([20.0] * 24), "clear")
 
     monkeypatch.setattr(weather_mod, "fetch", fake_fetch)
@@ -169,3 +169,45 @@ async def test_weather_endpoint(monkeypatch):
     async with TestClient(TestServer(build_web_app(tg))) as c:
         data = await (await c.get("/api/weather", headers=_auth())).json()
         assert data["condition"] == "clear" and data["label"] == "Açık" and data["t_max"] == 27 and len(data["hourly"]) == 24
+
+
+@pytest.mark.parametrize("hour,expect_tomorrow", [(9, False), (18, True), (22, True)])
+async def test_weather_shows_tomorrow_in_evening(monkeypatch, hour, expect_tomorrow):
+    from app import web as web_mod
+    from app import weather as weather_mod
+    from app.weather import DayWeather
+
+    asked = {}
+
+    async def fake_fetch(lat, lon, tz, http, day=None):
+        asked["day"] = day
+        return DayWeather(15, 29, 16, 24, 10, 12, tuple([20.0] * 24), "partly")
+
+    monkeypatch.setattr(weather_mod, "fetch", fake_fetch)
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 10, 9, hour, 17, tzinfo=tz))
+    tg = _tg()
+    tg.bot_data["cfg"].lat, tg.bot_data["cfg"].lon = 38.39, 27.17
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        data = await (await c.get("/api/weather", headers=_auth())).json()
+    assert data["is_tomorrow"] is expect_tomorrow
+    assert asked["day"].isoformat() == ("2026-10-10" if expect_tomorrow else "2026-10-09")
+    assert data["day"] == asked["day"].isoformat()
+
+
+@pytest.mark.parametrize("hour,expected", [(6, "2026-10-09"), (22, "2026-10-10")])
+async def test_preview_targets_next_briefing_day(monkeypatch, hour, expected):
+    from app import bot as bot_mod
+    from app import web as web_mod
+    from app.briefing import Briefing
+
+    asked = {}
+
+    async def fake_build(bot_data, day):
+        asked["day"] = day
+        return Briefing("h", "metin", "metin", None), {"photo_card": True}
+
+    monkeypatch.setattr(bot_mod, "build_briefing", fake_build)
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 10, 9, hour, 0, tzinfo=tz))
+    async with TestClient(TestServer(build_web_app(_tg()))) as c:
+        data = await (await c.get("/api/briefing/preview", headers=_auth())).json()
+    assert asked["day"].isoformat() == expected and data["text"] == "metin"

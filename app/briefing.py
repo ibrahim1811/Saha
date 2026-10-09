@@ -76,7 +76,7 @@ async def build(today: date, src: Sources, settings: dict) -> Briefing:
 
 def make_sources(cfg, db, llm, http, today: date, settings: dict) -> Sources:
     async def weather_section() -> WeatherInfo:
-        w = await weather.fetch(cfg.lat, cfg.lon, cfg.tz.key, http)
+        w = await weather.fetch(cfg.lat, cfg.lon, cfg.tz.key, http, today)
         return WeatherInfo(w, await outfit.advice(w, llm), outfit.hints(w))
 
     async def lessons_section() -> str:

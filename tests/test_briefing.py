@@ -52,3 +52,28 @@ async def test_disabled_sections_not_called_or_shown():
     b = await build(date(2026, 10, 9), _src(news=_boom, finance=_boom), _settings(news=False, finance=False))
     assert "📰" not in b.text and "💱" not in b.text
     assert "alınamadı" not in b.text
+
+
+async def test_make_sources_fetches_weather_for_given_day(monkeypatch):
+    from types import SimpleNamespace
+
+    from app import briefing as b
+    from app import weather as weather_mod
+
+    asked = {}
+
+    async def fake_fetch(lat, lon, tz, http, day=None):
+        asked["day"] = day
+        return DayWeather(15, 29, 16, 24, 0, 10)
+
+    monkeypatch.setattr(weather_mod, "fetch", fake_fetch)
+    from zoneinfo import ZoneInfo
+    cfg = SimpleNamespace(lat=38.39, lon=27.17, tz=ZoneInfo("Europe/Istanbul"))
+
+    class LLM:
+        async def ask(self, *a, **k):
+            return "ok"
+
+    src = b.make_sources(cfg, None, LLM(), None, date(2026, 10, 10), _settings())
+    await src.weather()
+    assert asked["day"] == date(2026, 10, 10)

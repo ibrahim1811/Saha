@@ -25,6 +25,13 @@ WHITE = (255, 255, 255)
 SUN = (255, 208, 74)
 
 
+def tr_capitalize(text: str) -> str:
+    if not text:
+        return text
+    first = {"i": "İ", "ı": "I"}.get(text[0], text[0].upper())
+    return first + text[1:]
+
+
 def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     name = "NotoSans-Bold.ttf" if bold else "NotoSans-Regular.ttf"
     return ImageFont.truetype(str(FONT_DIR / name), size * S)
@@ -146,7 +153,7 @@ def render_card(w: DayWeather, hints: list[str], today: date) -> bytes:
     else:
         d.text(_p(72, 700), "Saatlik veri yok", font=_font(30), fill=(255, 255, 255, 200))
 
-    chips = [h[:1].upper() + h[1:] for h in hints] or ["Rahat giyin"]
+    chips = [tr_capitalize(h) for h in hints] or ["Rahat giyin"]
     x, cf = 72, _font(30, bold=True)
     for chip in chips:
         cw = d.textlength(chip, font=cf) / S + 48
