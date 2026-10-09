@@ -105,25 +105,34 @@ def _pill(d: ImageDraw.ImageDraw, x, y, label: str, value: str) -> int:
     return int(w)
 
 
-def _chart(d: ImageDraw.ImageDraw, hourly: tuple[float, ...], x0, y0, x1, y1):
-    hours = list(range(6, 24))
+def _known_hours(hourly) -> list[int]:
+    return [h for h in range(6, 24) if h < len(hourly) and hourly[h] is not None]
+
+
+def _chart(d: ImageDraw.ImageDraw, hourly, x0, y0, x1, y1):
+    hours = _known_hours(hourly)
     temps = [hourly[h] for h in hours]
     lo, hi = min(temps), max(temps)
     span = max(hi - lo, 4)
     base = (lo + hi) / 2 - span / 2
-    pts = [(x0 + (x1 - x0) * i / (len(hours) - 1), y1 - 40 - (t - base) / span * (y1 - y0 - 110)) for i, t in enumerate(temps)]
-    d.polygon(_p(*[c for p in pts for c in p], x1, y1 - 40, x0, y1 - 40), fill=(255, 255, 255, 40))
+    pts = [(x0 + (x1 - x0) * (h - 6) / 17, y1 - 40 - (hourly[h] - base) / span * (y1 - y0 - 110)) for h in hours]
+    d.polygon(_p(*[c for p in pts for c in p], pts[-1][0], y1 - 40, pts[0][0], y1 - 40), fill=(255, 255, 255, 40))
     d.line(_p(*[c for p in pts for c in p]), fill=WHITE, width=6 * S, joint="curve")
     lf, tf = _font(24), _font(28, bold=True)
-    for i, h in enumerate(hours):
-        if h % 3:
-            continue
-        px, py = pts[i]
-        d.ellipse(_p(px - 9, py - 9, px + 9, py + 9), fill=WHITE)
-        label = f"{temps[i]:.0f}°"
-        d.text(_p(px - d.textlength(label, font=tf) / S / 2, py - 52), label, font=tf, fill=WHITE)
+    for h in range(6, 24, 3):
+        px = x0 + (x1 - x0) * (h - 6) / 17
         hour = f"{h:02d}:00"
         d.text(_p(px - d.textlength(hour, font=lf) / S / 2, y1 - 28), hour, font=lf, fill=(255, 255, 255, 200))
+    for (px, py), h in zip(pts, hours):
+        if h % 3:
+            continue
+        d.ellipse(_p(px - 9, py - 9, px + 9, py + 9), fill=WHITE)
+        label = f"{hourly[h]:.0f}°"
+        d.text(_p(px - d.textlength(label, font=tf) / S / 2, py - 52), label, font=tf, fill=WHITE)
+
+
+def _deg(value) -> str:
+    return "–" if value is None else f"{value:.0f}°"
 
 
 def render_card(w: DayWeather, hints: list[str], today: date) -> bytes:
@@ -145,10 +154,10 @@ def render_card(w: DayWeather, hints: list[str], today: date) -> bytes:
 
     x = 72
     for label, value in (("Yağış", f"%{w.rain_prob}"), ("Rüzgâr", f"{w.wind_max:.0f} km/s"),
-                         ("Sabah · Akşam", f"{w.t_morning:.0f}° · {w.t_evening:.0f}°")):
+                         ("Sabah · Akşam", f"{_deg(w.t_morning)} · {_deg(w.t_evening)}")):
         x += _pill(d, x, 480, label, value) + 20
 
-    if len(w.hourly) == 24:
+    if len(_known_hours(w.hourly)) >= 2:
         _chart(d, w.hourly, 100, 640, 980, 900)
     else:
         d.text(_p(72, 700), "Saatlik veri yok", font=_font(30), fill=(255, 255, 255, 200))

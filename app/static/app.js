@@ -100,14 +100,22 @@
   }
 
   function skyLine(hourly) {
-    const pts = hourly.slice(6, 24);
-    const lo = Math.min(...pts);
-    const hi = Math.max(...pts);
+    const known = [];
+    for (let h = 6; h < 24; h++) if (hourly[h] !== null && hourly[h] !== undefined) known.push([h, hourly[h]]);
+    if (known.length < 2) {
+      $("sky-line").innerHTML = "";
+      return;
+    }
+    const temps = known.map(([, t]) => t);
+    const lo = Math.min(...temps);
+    const hi = Math.max(...temps);
     const span = Math.max(hi - lo, 4);
     const base = (lo + hi) / 2 - span / 2;
-    const xy = pts.map((t, i) => [(i / (pts.length - 1)) * 360, 56 - ((t - base) / span) * 46]);
+    const xy = known.map(([h, t]) => [((h - 6) / 17) * 360, 56 - ((t - base) / span) * 46]);
     const line = xy.map(([x, y], i) => (i ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1)).join(" ");
-    $("sky-line").innerHTML = `<path class="area" d="${line} L360 64 L0 64 Z"/><path class="stroke" d="${line}"/>`;
+    const x0 = xy[0][0].toFixed(1);
+    const x1 = xy[xy.length - 1][0].toFixed(1);
+    $("sky-line").innerHTML = `<path class="area" d="${line} L${x1} 64 L${x0} 64 Z"/><path class="stroke" d="${line}"/>`;
   }
 
   function lessonItems(list, emptyText) {
@@ -154,8 +162,11 @@
         $("sky").dataset.cond = w.condition;
         $("sky-temp").textContent = Math.round(w.t_max) + "°";
         $("sky-cond").textContent = w.label || (w.is_tomorrow ? "Yarın" : "Bugün");
-        $("sky-range").textContent = `Sabah ${Math.round(w.t_morning)}°, akşam ${Math.round(w.t_evening)}°, yağış %${w.rain_prob}`;
-        if (w.hourly.length === 24) skyLine(w.hourly);
+        const deg = (v) => (v === null || v === undefined ? "–" : Math.round(v) + "°");
+        $("sky-range").textContent = w.t_morning === null
+          ? `En düşük ${deg(w.t_min)}, yağış %${w.rain_prob}`
+          : `Sabah ${deg(w.t_morning)}, akşam ${deg(w.t_evening)}, yağış %${w.rain_prob}`;
+        skyLine(w.hourly);
       })
       .catch(() => {
         $("sky-cond").textContent = "Hava alınamadı";

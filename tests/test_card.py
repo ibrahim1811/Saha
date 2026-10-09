@@ -36,3 +36,14 @@ def test_turkish_capitalize():
     assert tr_capitalize("ılık") == "Ilık"
     assert tr_capitalize("ceket al") == "Ceket al"
     assert tr_capitalize("") == ""
+
+
+def test_renders_partial_hourly_with_missing_morning():
+    hourly = tuple([None] * 20 + [21.0, 20.5, 20.0, 19.5])
+    w = DayWeather(19, 21, None, None, 0, 4, hourly, "clear")
+    assert _open(render_card(w, [], date(2026, 10, 9))).size == (1080, 1080)
+
+
+def test_renders_single_known_hour():
+    w = DayWeather(19, 19, None, None, 0, 4, tuple([None] * 23 + [19.0]), "clear")
+    assert _open(render_card(w, [], date(2026, 10, 9))).size == (1080, 1080)

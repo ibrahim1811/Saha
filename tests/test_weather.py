@@ -58,10 +58,22 @@ def test_metno_parse_local_day():
     w = parse_metno(_metno(), date(2026, 10, 10), TZ)
     assert w.t_min == 14.0 and w.t_max == 33.0
     assert w.t_morning == 18.0 and w.t_evening == 29.0
-    assert w.hourly[0] == 14.0 and w.hourly[23] == 33.0 and len(w.hourly) == 24
+    assert w.hourly[:4] == (None, None, None, None) and w.hourly[4] == 14.0 and w.hourly[23] == 33.0 and len(w.hourly) == 24
     assert w.wind_max == 18.0
     assert w.rain_prob == 40
+    assert w.rain_hours == (15, 16)
     assert w.condition == "partly"
+
+
+def test_metno_partial_day_does_not_invent_morning():
+    late = {"properties": {"timeseries": [
+        {"time": "2026-10-09T19:00:00Z", "data": {"instant": {"details": {"air_temperature": 19.9, "wind_speed": 1}}}},
+        {"time": "2026-10-09T20:00:00Z", "data": {"instant": {"details": {"air_temperature": 19.3, "wind_speed": 1}}}},
+    ]}}
+    w = parse_metno(late, date(2026, 10, 9), TZ)
+    assert w.t_morning is None and w.t_evening is None
+    assert [h for h, t in enumerate(w.hourly) if t is not None] == [22, 23]
+    assert summary(w) == "En düşük 19°, en yüksek 20°, yağış %0, rüzgâr 4 km/s"
 
 
 def test_metno_no_data_for_day_raises():
@@ -97,7 +109,7 @@ async def test_fetch_falls_back_to_metno_on_429(monkeypatch):
 
     w = await weather.fetch(38.39, 27.17, "Europe/Istanbul", _client(handler))
     assert w.t_max == 33.0
-    assert calls == ["api.open-meteo.com", "api.open-meteo.com", "api.met.no"]
+    assert calls == ["api.open-meteo.com", "api.met.no"]
 
 
 async def test_fetch_uses_openmeteo_when_ok():
@@ -176,3 +188,41 @@ async def test_fetch_caches_success(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clear_cache():
     weather._CACHE.clear()
+
+
+
+def test_openmeteo_rain_hours_from_hourly_probability():
+    d = _om()
+    d["hourly"]["precipitation_probability"] = [0] * 14 + [45, 60, 70, 30] + [0] * 6
+    assert parse_openmeteo(d).rain_hours == (14, 15, 16)
+
+
+def test_openmeteo_null_temperature_triggers_error():
+    d = _om()
+    d["daily"]["temperature_2m_max"] = [None]
+    with pytest.raises(ValueError):
+        parse_openmeteo(d)
+
+
+async def test_openmeteo_5xx_still_retried(monkeypatch):
+    monkeypatch.setattr(weather, "RETRY_DELAY", 0)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        if request.url.host == "api.open-meteo.com" and len(calls) == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json=_om())
+
+    await weather.fetch(38.39, 27.17, "Europe/Istanbul", _client(handler))
+    assert calls == ["api.open-meteo.com", "api.open-meteo.com"]
+
+
+@pytest.mark.parametrize("hours,prob,expected", [
+    ((14, 15, 16, 19), 70, "☔ Yağmur bekleniyor: 14:00–17:00, 19:00–20:00 (ihtimal %70). Şemsiyeni hazırla."),
+    ((), 50, "☔ Yağmur ihtimali %50. Şemsiyeni yanına al."),
+    ((), 20, None),
+])
+def test_rain_warning(hours, prob, expected):
+    w = DayWeather(10, 20, 12, 15, prob, 5, rain_hours=hours)
+    assert weather.rain_warning(w) == expected

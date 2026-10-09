@@ -14,6 +14,7 @@ METNO_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact"
 METNO_UA = "saha-bot/1.0 github.com/ibrahim1811/Saha"
 RETRY_DELAY = 1.0
 CACHE_TTL = 900
+RAIN_PROB_THRESHOLD = 40
 _CACHE: dict[tuple, tuple[float, "DayWeather"]] = {}
 
 CONDITION_TR = {
@@ -31,12 +32,13 @@ CONDITION_TR = {
 class DayWeather:
     t_min: float
     t_max: float
-    t_morning: float
-    t_evening: float
+    t_morning: float | None
+    t_evening: float | None
     rain_prob: int
     wind_max: float
-    hourly: tuple[float, ...] = ()
+    hourly: tuple[float | None, ...] = ()
     condition: str = ""
+    rain_hours: tuple[int, ...] = ()
 
 
 def condition_from_wmo(code: int | None) -> str:
@@ -68,7 +70,10 @@ def condition_from_symbol(symbol: str) -> str:
 def parse_openmeteo(data: dict, index: int = 0) -> DayWeather:
     daily = data["daily"]
     hourly = data["hourly"]["temperature_2m"][24 * index : 24 * index + 24]
+    probs = (data["hourly"].get("precipitation_probability") or [])[24 * index : 24 * index + 24]
     codes = daily.get("weather_code") or []
+    if daily["temperature_2m_min"][index] is None or daily["temperature_2m_max"][index] is None or len(hourly) < 24:
+        raise ValueError("Open-Meteo verisi eksik")
     return DayWeather(
         t_min=daily["temperature_2m_min"][index],
         t_max=daily["temperature_2m_max"][index],
@@ -78,18 +83,15 @@ def parse_openmeteo(data: dict, index: int = 0) -> DayWeather:
         wind_max=daily["wind_speed_10m_max"][index],
         hourly=tuple(hourly),
         condition=condition_from_wmo(codes[index] if len(codes) > index else None),
+        rain_hours=tuple(h for h, p in enumerate(probs) if p is not None and p >= RAIN_PROB_THRESHOLD),
     )
-
-
-def _fill(values: dict[int, float]) -> list[float]:
-    known = sorted(values)
-    return [values[min(known, key=lambda k: (abs(k - h), k))] for h in range(24)]
 
 
 def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
     temps: dict[int, float] = {}
     winds: list[float] = []
     precip = 0.0
+    rain_hours: list[int] = []
     symbols: dict[int, str] = {}
     for item in data["properties"]["timeseries"]:
         local = datetime.fromisoformat(item["time"].replace("Z", "+00:00")).astimezone(tz)
@@ -99,22 +101,25 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         temps[local.hour] = details["air_temperature"]
         winds.append(details.get("wind_speed", 0.0) * 3.6)
         nxt = item["data"].get("next_1_hours") or item["data"].get("next_6_hours") or {}
-        precip += nxt.get("details", {}).get("precipitation_amount", 0.0)
+        amount = nxt.get("details", {}).get("precipitation_amount", 0.0)
+        precip += amount
+        if amount >= 0.1:
+            rain_hours.append(local.hour)
         if "summary" in nxt:
             symbols[local.hour] = nxt["summary"]["symbol_code"]
     if not temps:
         raise ValueError("MET Norway verisinde bugüne ait saat yok")
-    hourly = _fill(temps)
     symbol = symbols[min(symbols, key=lambda h: abs(h - 12))] if symbols else ""
     return DayWeather(
         t_min=min(temps.values()),
         t_max=max(temps.values()),
-        t_morning=hourly[8],
-        t_evening=hourly[19],
+        t_morning=temps.get(8),
+        t_evening=temps.get(19),
         rain_prob=0 if precip == 0 else (40 if precip < 1 else 70),
         wind_max=round(max(winds), 1),
-        hourly=tuple(hourly),
+        hourly=tuple(temps.get(h) for h in range(24)),
         condition=condition_from_symbol(symbol),
+        rain_hours=tuple(sorted(set(rain_hours))),
     )
 
 
@@ -126,7 +131,7 @@ async def _openmeteo(lat: float, lon: float, tz_name: str, http: httpx.AsyncClie
     params = {
         "latitude": lat,
         "longitude": lon,
-        "hourly": "temperature_2m",
+        "hourly": "temperature_2m,precipitation_probability",
         "daily": "temperature_2m_min,temperature_2m_max,precipitation_probability_max,wind_speed_10m_max,weather_code",
         "timezone": tz_name,
         "forecast_days": offset + 1,
@@ -136,8 +141,9 @@ async def _openmeteo(lat: float, lon: float, tz_name: str, http: httpx.AsyncClie
             resp = await http.get(OPENMETEO_URL, params=params, timeout=10)
             resp.raise_for_status()
             return parse_openmeteo(resp.json(), offset)
-        except httpx.HTTPError:
-            if attempt == 1:
+        except httpx.HTTPError as e:
+            rate_limited = isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
+            if attempt == 1 or rate_limited:
                 raise
             await asyncio.sleep(RETRY_DELAY)
     raise RuntimeError("unreachable")
@@ -168,8 +174,30 @@ async def fetch(lat: float, lon: float, tz_name: str, http: httpx.AsyncClient, d
 
 
 def summary(w: DayWeather) -> str:
-    return (
-        f"Sabah {w.t_morning:.0f}° → akşam {w.t_evening:.0f}° "
-        f"(en düşük {w.t_min:.0f}°, en yüksek {w.t_max:.0f}°), "
-        f"yağış %{w.rain_prob}, rüzgâr {w.wind_max:.0f} km/s"
-    )
+    tail = f"yağış %{w.rain_prob}, rüzgâr {w.wind_max:.0f} km/s"
+    if w.t_morning is not None and w.t_evening is not None:
+        return f"Sabah {w.t_morning:.0f}° → akşam {w.t_evening:.0f}° (en düşük {w.t_min:.0f}°, en yüksek {w.t_max:.0f}°), {tail}"
+    return f"En düşük {w.t_min:.0f}°, en yüksek {w.t_max:.0f}°, {tail}"
+
+
+def _ranges(hours: tuple[int, ...]) -> list[str]:
+    out, start, prev = [], None, None
+    for h in sorted(hours):
+        if start is None:
+            start = prev = h
+        elif h == prev + 1:
+            prev = h
+        else:
+            out.append(f"{start:02d}:00–{prev + 1:02d}:00")
+            start = prev = h
+    if start is not None:
+        out.append(f"{start:02d}:00–{prev + 1:02d}:00")
+    return out
+
+
+def rain_warning(w: DayWeather) -> str | None:
+    if w.rain_hours:
+        return f"☔ Yağmur bekleniyor: {', '.join(_ranges(w.rain_hours))} (ihtimal %{w.rain_prob}). Şemsiyeni hazırla."
+    if w.rain_prob >= RAIN_PROB_THRESHOLD:
+        return f"☔ Yağmur ihtimali %{w.rain_prob}. Şemsiyeni yanına al."
+    return None
