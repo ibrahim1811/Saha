@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: gunluk-ajan
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.main
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: TZ
+        value: Europe/Istanbul
+      - key: LAT
+        value: "38.39"
+      - key: LON
+        value: "27.17"
+      - key: BRIEFING_TIME
+        value: "07:00"
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: LLM_VISION_MODEL
+        value: meta-llama/llama-4-scout-17b-16e-instruct
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
