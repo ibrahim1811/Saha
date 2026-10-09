@@ -129,10 +129,16 @@
 
   async function loadToday() {
     $("sky-date").textContent = fmtDate(new Date().toISOString());
-    const [status, schedules, taskList] = await Promise.all([api("GET", "/api/status"), api("GET", "/api/schedules"), api("GET", "/api/tasks")]);
-    $("today-tasks").innerHTML = taskList.length
-      ? taskItems(taskList.slice(0, 3), false)
-      : '<p class="empty">Yaklaşan ödev ya da sınav yok. Bota "fizik ödevi cuma teslim" yazarak ekleyebilirsin.</p>';
+    api("GET", "/api/tasks")
+      .then((taskList) => {
+        $("today-tasks").innerHTML = taskList.length
+          ? taskItems(taskList.slice(0, 3), false)
+          : '<p class="empty">Yaklaşan ödev ya da sınav yok. Bota "fizik ödevi cuma teslim" yazarak ekleyebilirsin.</p>';
+      })
+      .catch(() => {
+        $("today-tasks").innerHTML = '<p class="empty">Ödev listesi yüklenemedi.</p>';
+      });
+    const [status, schedules] = await Promise.all([api("GET", "/api/status"), api("GET", "/api/schedules")]);
     state.settings = status.settings;
     state.schedules = schedules;
 

@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -128,9 +129,11 @@ async def send_evening(context) -> None:
 
 async def build_briefing(bot_data, today, evening: bool = False) -> tuple[briefing.Briefing, dict]:
     s = await load_settings(bot_data)
-    ref_day = datetime.now(bot_data["cfg"].tz).date()
+    now = datetime.now(bot_data["cfg"].tz)
+    ref_day = now.date()
+    from_hour = now.hour if today == ref_day else 0
     src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s, ref_day)
-    return await briefing.build(today, src, s, evening=evening), s
+    return await briefing.build(today, src, s, evening=evening, from_hour=from_hour), s
 
 
 def photo_caption(info: briefing.WeatherInfo) -> str:
@@ -333,7 +336,7 @@ async def hatirlaticilar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args or not context.args[0].lstrip("#").isdigit():
+    if not context.args or not re.fullmatch(r"#?[0-9]+", context.args[0]):
         await update.message.reply_text("Kullanım: /sil 3")
         return
     reminder_id = int(context.args[0].lstrip("#"))
@@ -370,7 +373,7 @@ async def odevler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def bitti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args or not context.args[0].lstrip("#").isdigit():
+    if not context.args or not re.fullmatch(r"#?[0-9]+", context.args[0]):
         await update.message.reply_text("Kullanım: /bitti 3")
         return
     done = await _deps(context)["db"].set_task_done(int(context.args[0].lstrip("#")), True)

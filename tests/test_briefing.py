@@ -126,3 +126,14 @@ async def test_tasks_source_includes_overdue():
     src = bmod.make_sources(SimpleNamespace(), db, None, None, date(2026, 10, 9), _settings())
     assert "2 gün geçti" in await src.tasks()
     assert db.upcoming_tasks.await_args.args == (date(2026, 10, 16),)
+
+
+async def test_rain_alert_even_when_weather_section_off():
+    b = await build(date(2026, 10, 10), _src(weather=_ok(_rainy()), tasks=_ok("yok")), _settings(weather=False), evening=True)
+    assert b.text.split("\n\n")[1].startswith("☔") and "🌤 Hava" not in b.text
+
+
+async def test_rain_alert_respects_from_hour():
+    early = WeatherInfo(DayWeather(15, 22, 16, 18, 70, 10, rain_hours=(3, 4)), "x", [])
+    b = await build(date(2026, 10, 10), _src(weather=_ok(early)), _settings(), from_hour=7)
+    assert "☔" not in b.text

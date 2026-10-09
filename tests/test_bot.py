@@ -378,3 +378,22 @@ async def test_text_task_cue_but_not_a_task_goes_to_chat():
     await botmod.text(update, ctx)
     ctx.bot_data["db"].add_task.assert_not_awaited()
     assert len(llm.calls) == 2
+
+
+@pytest.mark.parametrize("arg", ["²", "-1", "abc", "1.5"])
+async def test_bitti_rejects_bad_numbers(arg):
+    update = _msg_update("/bitti")
+    ctx = _msg_ctx(None)
+    ctx.args = [arg]
+    ctx.bot_data["db"] = SimpleNamespace(set_task_done=AsyncMock())
+    await botmod.bitti(update, ctx)
+    ctx.bot_data["db"].set_task_done.assert_not_awaited()
+    assert "Kullanım" in update.message.reply_text.await_args.args[0]
+
+
+async def test_sil_rejects_superscript():
+    update = _msg_update("/sil")
+    ctx = _msg_ctx(None)
+    ctx.args = ["²"]
+    await botmod.sil(update, ctx)
+    assert "Kullanım" in update.message.reply_text.await_args.args[0]

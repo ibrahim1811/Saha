@@ -100,11 +100,13 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         details = item["data"]["instant"]["details"]
         temps[local.hour] = details["air_temperature"]
         winds.append(details.get("wind_speed", 0.0) * 3.6)
-        nxt = item["data"].get("next_1_hours") or item["data"].get("next_6_hours") or {}
+        one = item["data"].get("next_1_hours")
+        nxt = one or item["data"].get("next_6_hours") or {}
         amount = nxt.get("details", {}).get("precipitation_amount", 0.0)
         precip += amount
         if amount >= 0.1:
-            rain_hours.append(local.hour)
+            span = 1 if one else 6
+            rain_hours.extend(range(local.hour, min(24, local.hour + span)))
         if "summary" in nxt:
             symbols[local.hour] = nxt["summary"]["symbol_code"]
     if not temps:
@@ -195,9 +197,12 @@ def _ranges(hours: tuple[int, ...]) -> list[str]:
     return out
 
 
-def rain_warning(w: DayWeather) -> str | None:
+def rain_warning(w: DayWeather, from_hour: int = 0) -> str | None:
+    hours = tuple(h for h in w.rain_hours if h >= from_hour)
+    if hours:
+        return f"☔ Yağmur bekleniyor: {', '.join(_ranges(hours))} (ihtimal %{w.rain_prob}). Şemsiyeni hazırla."
     if w.rain_hours:
-        return f"☔ Yağmur bekleniyor: {', '.join(_ranges(w.rain_hours))} (ihtimal %{w.rain_prob}). Şemsiyeni hazırla."
+        return None
     if w.rain_prob >= RAIN_PROB_THRESHOLD:
         return f"☔ Yağmur ihtimali %{w.rain_prob}. Şemsiyeni yanına al."
     return None

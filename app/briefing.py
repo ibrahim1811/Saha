@@ -54,11 +54,20 @@ def header(today: date, evening: bool = False) -> str:
     return f"🌙 İyi geceler Kayra! Yarın {day}" if evening else f"Günaydın Kayra! ☀️ {day}"
 
 
-async def build(today: date, src: Sources, settings: dict, evening: bool = False) -> Briefing:
+async def build(today: date, src: Sources, settings: dict, evening: bool = False, from_hour: int = 0) -> Briefing:
     enabled = [s for s in SECTIONS if settings["sections"].get(s[0]) and (not evening or s[0] in EVENING_SECTIONS)]
     if evening:
         enabled = [(a, t.replace("Bugünün", "Yarının"), l) for a, t, l in enabled]
-    results = await asyncio.gather(*(getattr(src, attr)() for attr, _, _ in enabled), return_exceptions=True)
+    show_weather = any(a == "weather" for a, _, _ in enabled)
+    fetch = enabled if show_weather else [SECTIONS[0]] + enabled
+    results = await asyncio.gather(*(getattr(src, attr)() for attr, _, _ in fetch), return_exceptions=True)
+    if not show_weather:
+        hidden, results = results[0], results[1:]
+        alert_info = hidden if isinstance(hidden, WeatherInfo) else None
+        if isinstance(hidden, BaseException):
+            log.warning("Yağmur uyarısı için hava alınamadı: %r", hidden)
+    else:
+        alert_info = None
     head = header(today, evening)
     parts: list[tuple[str, str]] = []
     info = None
@@ -73,7 +82,8 @@ async def build(today: date, src: Sources, settings: dict, evening: bool = False
             body = result
         parts.append((attr, f"{title}\n{body}"))
     top = [head]
-    alert = weather.rain_warning(info.w) if info else None
+    source = info or alert_info
+    alert = weather.rain_warning(source.w, from_hour) if source else None
     if alert:
         top.append(alert)
     return Briefing(

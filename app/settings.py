@@ -52,6 +52,8 @@ def validate(payload) -> dict:
         raise SettingsError("Haber sayısı 1 ile 10 arasında olmalı")
     if not isinstance(payload.get("evening_enabled"), bool):
         raise SettingsError("Akşam özeti açık/kapalı olmalı")
+    if payload["evening_enabled"] and not any(sections[s] for s in ("weather", "lessons", "tasks")):
+        raise SettingsError("Akşam özeti için hava, ders ya da ödev bölümlerinden en az biri açık olmalı")
     return {
         "briefing_time": _time(payload.get("briefing_time")),
         "sections": dict(sections),

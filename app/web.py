@@ -10,6 +10,7 @@ from aiohttp import web
 from dataclasses import asdict
 
 from app import bot, card, reminders, schedule, settings, tasks, weather
+from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
 
@@ -39,6 +40,9 @@ async def errors(request: web.Request, handler):
         return await handler(request)
     except ApiError as e:
         return _json({"error": e.message}, e.status)
+    except LLMError:
+        log.exception("Panel isteğinde LLM hatası: %s %s", request.method, request.path)
+        return _json({"error": "Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener misin?"}, 503)
     except tasks.NotATask:
         return _json({"error": "Bunu ödev ya da sınav olarak anlayamadım, tarihiyle yazar mısın?"}, 400)
     except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError) as e:

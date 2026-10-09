@@ -226,3 +226,17 @@ async def test_openmeteo_5xx_still_retried(monkeypatch):
 def test_rain_warning(hours, prob, expected):
     w = DayWeather(10, 20, 12, 15, prob, 5, rain_hours=hours)
     assert weather.rain_warning(w) == expected
+
+
+def test_rain_warning_skips_past_hours():
+    w = DayWeather(10, 20, 12, 15, 70, 5, rain_hours=(2, 3, 15))
+    assert weather.rain_warning(w, from_hour=7) == "☔ Yağmur bekleniyor: 15:00–16:00 (ihtimal %70). Şemsiyeni hazırla."
+    assert weather.rain_warning(DayWeather(10, 20, 12, 15, 70, 5, rain_hours=(2, 3)), from_hour=7) is None
+
+
+def test_metno_six_hour_block_marks_all_hours():
+    data = {"properties": {"timeseries": [
+        {"time": "2026-10-10T09:00:00Z", "data": {"instant": {"details": {"air_temperature": 20, "wind_speed": 1}},
+                                                  "next_6_hours": {"summary": {"symbol_code": "rain"}, "details": {"precipitation_amount": 3.0}}}},
+    ]}}
+    assert parse_metno(data, date(2026, 10, 10), TZ).rain_hours == (12, 13, 14, 15, 16, 17)

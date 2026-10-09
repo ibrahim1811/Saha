@@ -282,3 +282,13 @@ async def test_task_past_date_400():
 async def test_static_not_cached(client):
     resp = await client.get("/static/app.js")
     assert resp.status == 200 and resp.headers["Cache-Control"] == "no-cache"
+
+
+async def test_llm_down_returns_503():
+    from app.llm import LLMError
+
+    tg = _tg(FakeLLM(exc=LLMError("boom")))
+    tg.bot_data["db"] = TaskStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        resp = await c.post("/api/tasks", json={"text": "fizik ödevi cuma"}, headers=_auth())
+        assert resp.status == 503 and "ulaşamıyorum" in (await resp.json())["error"]
