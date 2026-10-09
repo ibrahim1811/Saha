@@ -12,7 +12,7 @@ pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL yok")
 @pytest.fixture
 async def db():
     d = await DB.connect(URL)
-    await d.pool.execute("TRUNCATE schedules, notes, reminders, settings, tasks RESTART IDENTITY")
+    await d.pool.execute("TRUNCATE schedules, notes, reminders, settings, tasks, grades, absences, exams RESTART IDENTITY")
     yield d
     await d.close()
 
@@ -82,3 +82,34 @@ async def test_upcoming_tasks_includes_overdue(db):
     await db.add_task("odev", "Eski", date(2026, 10, 1))
     await db.add_task("odev", "Uzak", date(2026, 12, 1))
     assert [t["title"] for t in await db.upcoming_tasks(date(2026, 10, 16))] == ["Eski"]
+
+
+async def test_grades_crud(db):
+    a = await db.add_grade("Fizik", "1. yazılı", 85)
+    await db.add_grade("Kimya", "performans", 90.5)
+    assert [(g["subject"], float(g["score"])) for g in await db.list_grades()] == [("Fizik", 85.0), ("Kimya", 90.5)]
+    assert await db.delete_grade(a) is True and await db.delete_grade(a) is False
+
+
+async def test_absences_upsert_by_day(db):
+    from datetime import date
+
+    await db.add_absence(date(2026, 10, 9), False, False)
+    await db.add_absence(date(2026, 10, 9), True, True)
+    rows = await db.list_absences()
+    assert len(rows) == 1 and rows[0]["excused"] is True and rows[0]["half"] is True
+    assert await db.delete_absence(rows[0]["id"]) is True
+
+
+async def test_exams_crud(db):
+    from datetime import date
+
+    e = await db.add_exam("TYT", 78.5, {"Türkçe": 32}, date(2026, 10, 9))
+    rows = await db.list_exams()
+    assert rows[0]["kind"] == "TYT" and float(rows[0]["total"]) == 78.5 and rows[0]["details"] == {"Türkçe": 32}
+    assert await db.delete_exam(e) is True
+
+
+async def test_note_with_subject(db):
+    await db.add_note("Newton yasaları", "foto", "Fizik")
+    assert (await db.search_notes("newton"))[0]["subject"] == "Fizik"

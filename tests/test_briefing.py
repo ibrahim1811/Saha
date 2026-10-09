@@ -19,7 +19,7 @@ async def _boom():
 
 
 def _src(**over):
-    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"), tasks=_ok("Yaklaşan ödev ya da sınav yok."))
+    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"), tasks=_ok("Yaklaşan ödev ya da sınav yok."), school=_ok("🎯 YKS'ye 252 gün"))
     base.update(over)
     return Sources(**base)
 
@@ -137,3 +137,25 @@ async def test_rain_alert_respects_from_hour():
     early = WeatherInfo(DayWeather(15, 22, 16, 18, 70, 10, rain_hours=(3, 4)), "x", [])
     b = await build(date(2026, 10, 10), _src(weather=_ok(early)), _settings(), from_hour=7)
     assert "☔" not in b.text
+
+
+
+async def test_school_section_first_in_morning_not_in_evening():
+    b = await build(date(2026, 10, 9), _src(), _settings())
+    assert b.text.index("🎯 Okul ve YKS") < b.text.index("🌤 Hava")
+    e = await build(date(2026, 10, 10), _src(), _settings(), evening=True)
+    assert "🎯 Okul ve YKS" not in e.text
+
+
+async def test_school_source_includes_exam_summary():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app import briefing as bmod
+
+    db = SimpleNamespace(list_exams=AsyncMock(return_value=[{"kind": "TYT", "total": 80.0, "taken": date(2026, 10, 1), "details": {}}]))
+    s = _settings()
+    s["target_tyt"] = 90
+    src = bmod.make_sources(SimpleNamespace(), db, None, None, date(2026, 10, 10), s)
+    text = await src.school()
+    assert text.startswith("🎯 YKS'ye 252 gün") and "Hedefe 10 net var" in text

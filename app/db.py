@@ -34,6 +34,28 @@ CREATE TABLE IF NOT EXISTS tasks (
     done BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS grades (
+    id SERIAL PRIMARY KEY,
+    subject TEXT NOT NULL,
+    label TEXT NOT NULL,
+    score NUMERIC(5, 2) NOT NULL CHECK (score >= 0 AND score <= 100),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS absences (
+    id SERIAL PRIMARY KEY,
+    day DATE NOT NULL UNIQUE,
+    excused BOOLEAN NOT NULL DEFAULT false,
+    half BOOLEAN NOT NULL DEFAULT false
+);
+CREATE TABLE IF NOT EXISTS exams (
+    id SERIAL PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('TYT', 'AYT')),
+    total NUMERIC(6, 2) NOT NULL,
+    details JSONB NOT NULL DEFAULT '{}',
+    taken DATE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE notes ADD COLUMN IF NOT EXISTS subject TEXT;
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL
@@ -93,8 +115,48 @@ class DB:
             json.dumps(value, ensure_ascii=False),
         )
 
-    async def add_note(self, text: str, source: str) -> int:
-        return await self.pool.fetchval("INSERT INTO notes (text, source) VALUES ($1, $2) RETURNING id", text, source)
+    async def add_note(self, text: str, source: str, subject: str | None = None) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO notes (text, source, subject) VALUES ($1, $2, $3) RETURNING id", text, source, subject
+        )
+
+    async def add_grade(self, subject: str, label: str, score: float) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO grades (subject, label, score) VALUES ($1, $2, $3) RETURNING id", subject, label, score
+        )
+
+    async def list_grades(self) -> list[dict]:
+        rows = await self.pool.fetch("SELECT id, subject, label, score, created_at FROM grades ORDER BY created_at, id")
+        return [{**dict(r), "score": float(r["score"])} for r in rows]
+
+    async def delete_grade(self, grade_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM grades WHERE id = $1", grade_id)).endswith(" 1")
+
+    async def add_absence(self, day: date, excused: bool, half: bool) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO absences (day, excused, half) VALUES ($1, $2, $3) "
+            "ON CONFLICT (day) DO UPDATE SET excused = EXCLUDED.excused, half = EXCLUDED.half RETURNING id",
+            day, excused, half,
+        )
+
+    async def list_absences(self) -> list[dict]:
+        return [dict(r) for r in await self.pool.fetch("SELECT id, day, excused, half FROM absences ORDER BY day DESC")]
+
+    async def delete_absence(self, absence_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM absences WHERE id = $1", absence_id)).endswith(" 1")
+
+    async def add_exam(self, kind: str, total: float, details: dict, taken: date) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO exams (kind, total, details, taken) VALUES ($1, $2, $3::jsonb, $4) RETURNING id",
+            kind, total, json.dumps(details, ensure_ascii=False), taken,
+        )
+
+    async def list_exams(self) -> list[dict]:
+        rows = await self.pool.fetch("SELECT id, kind, total, details, taken FROM exams ORDER BY taken, id")
+        return [{**dict(r), "total": float(r["total"]), "details": json.loads(r["details"])} for r in rows]
+
+    async def delete_exam(self, exam_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM exams WHERE id = $1", exam_id)).endswith(" 1")
 
     async def recent_notes(self, limit: int = 50) -> list[dict]:
         rows = await self.pool.fetch(
@@ -104,7 +166,7 @@ class DB:
 
     async def search_notes(self, query: str, limit: int = 100) -> list[dict]:
         rows = await self.pool.fetch(
-            "SELECT id, text, source, created_at FROM notes WHERE text ILIKE '%' || $1 || '%' "
+            "SELECT id, text, source, subject, created_at FROM notes WHERE text ILIKE '%' || $1 || '%' OR subject ILIKE '%' || $1 || '%' "
             "ORDER BY created_at DESC, id DESC LIMIT $2",
             query.strip(), limit,
         )

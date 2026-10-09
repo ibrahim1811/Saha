@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app import finance, news, outfit, tasks, weather
+from app import calendar_tr, finance, news, outfit, school, tasks, weather
 from app.schedule import format_lessons, lessons_for
 from app.weather import DayWeather
 
@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 DAYS = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
 SECTIONS = [
+    ("school", "🎯 Okul ve YKS", "Okul bilgisi"),
     ("weather", "🌤 Hava", "Hava"),
     ("lessons", "📚 Bugünün dersleri", "Ders programı"),
     ("tasks", "📌 Ödev ve sınavlar", "Ödev ve sınavlar"),
@@ -20,6 +21,7 @@ SECTIONS = [
     ("news", "📰 Haberler", "Haberler"),
 ]
 EVENING_SECTIONS = {"weather", "lessons", "tasks"}
+WEATHER_SECTION = SECTIONS[1]
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class Sources:
     finance: Callable[[], Awaitable[str]]
     news: Callable[[], Awaitable[str]]
     tasks: Callable[[], Awaitable[str]]
+    school: Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,7 @@ async def build(today: date, src: Sources, settings: dict, evening: bool = False
     if evening:
         enabled = [(a, t.replace("Bugünün", "Yarının"), l) for a, t, l in enabled]
     show_weather = any(a == "weather" for a, _, _ in enabled)
-    fetch = enabled if show_weather else [SECTIONS[0]] + enabled
+    fetch = enabled if show_weather else [WEATHER_SECTION] + enabled
     results = await asyncio.gather(*(getattr(src, attr)() for attr, _, _ in fetch), return_exceptions=True)
     if not show_weather:
         hidden, results = results[0], results[1:]
@@ -106,7 +109,17 @@ def make_sources(cfg, db, llm, http, today: date, settings: dict, ref_day: date 
         items = await db.upcoming_tasks(today + timedelta(days=7))
         return tasks.format_tasks(items, ref_day or today)
 
+    async def school_section() -> str:
+        lines = [calendar_tr.school_line(today, date.fromisoformat(settings["yks_date"]), settings["yks_estimated"])]
+        exams = await db.list_exams()
+        for kind, key in (("TYT", "target_tyt"), ("AYT", "target_ayt")):
+            summary = school.exam_summary(exams, kind, settings.get(key))
+            if summary:
+                lines.append(summary)
+        return "\n".join(lines)
+
     return Sources(
+        school=school_section,
         weather=weather_section,
         lessons=lessons_section,
         finance=lambda: finance.fetch(http),

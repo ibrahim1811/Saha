@@ -6,7 +6,7 @@ from app.settings import DEFAULTS, SettingsError, merge, validate
 def test_merge_defaults_with_env_time():
     s = merge(None, "06:30")
     assert s["briefing_time"] == "06:30"
-    assert s["sections"] == {"weather": True, "lessons": True, "tasks": True, "finance": True, "news": True}
+    assert s["sections"] == {"school": True, "weather": True, "lessons": True, "tasks": True, "finance": True, "news": True}
     assert s["photo_card"] is True and s["news_count"] == 5
 
 
@@ -65,3 +65,24 @@ def test_evening_needs_an_evening_section():
     with pytest.raises(SettingsError, match="Akşam"):
         validate({**DEFAULTS, "sections": only_market})
     assert validate({**DEFAULTS, "sections": only_market, "evening_enabled": False})["evening_enabled"] is False
+
+
+def test_school_defaults():
+    s = merge(None, "07:00")
+    assert s["sections"]["school"] is True and s["weather_alerts"] is True
+    assert s["yks_date"] == "2027-06-19" and s["yks_estimated"] is True
+    assert s["target_tyt"] is None and s["target_ayt"] is None
+
+
+def test_school_settings_valid():
+    out = validate({**DEFAULTS, "yks_date": "2027-06-12", "yks_estimated": False, "target_tyt": 95, "target_ayt": 60.5})
+    assert out["yks_date"] == "2027-06-12" and out["target_tyt"] == 95 and out["target_ayt"] == 60.5
+
+
+@pytest.mark.parametrize("patch", [
+    {"yks_date": "19.06.2027"}, {"yks_estimated": "evet"}, {"target_tyt": 130}, {"target_ayt": 81},
+    {"target_tyt": "90"}, {"weather_alerts": 1},
+])
+def test_school_settings_invalid(patch):
+    with pytest.raises(SettingsError):
+        validate({**DEFAULTS, **patch})

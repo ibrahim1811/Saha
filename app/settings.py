@@ -1,7 +1,8 @@
 import copy
 import re
+from datetime import date
 
-SECTIONS = ["weather", "lessons", "tasks", "finance", "news"]
+SECTIONS = ["school", "weather", "lessons", "tasks", "finance", "news"]
 DEFAULTS = {
     "briefing_time": "07:00",
     "sections": {s: True for s in SECTIONS},
@@ -9,7 +10,13 @@ DEFAULTS = {
     "news_count": 5,
     "evening_enabled": True,
     "evening_time": "23:00",
+    "weather_alerts": True,
+    "yks_date": "2027-06-19",
+    "yks_estimated": True,
+    "target_tyt": None,
+    "target_ayt": None,
 }
+TARGET_MAX = {"target_tyt": 120, "target_ayt": 80}
 
 
 class SettingsError(ValueError):
@@ -54,7 +61,24 @@ def validate(payload) -> dict:
         raise SettingsError("Akşam özeti açık/kapalı olmalı")
     if payload["evening_enabled"] and not any(sections[s] for s in ("weather", "lessons", "tasks")):
         raise SettingsError("Akşam özeti için hava, ders ya da ödev bölümlerinden en az biri açık olmalı")
+    for key in ("weather_alerts", "yks_estimated"):
+        if not isinstance(payload.get(key), bool):
+            raise SettingsError("Açık/kapalı ayarı hatalı")
+    try:
+        yks = date.fromisoformat(str(payload.get("yks_date"))).isoformat()
+    except ValueError as e:
+        raise SettingsError("YKS tarihi YYYY-AA-GG biçiminde olmalı") from e
+    targets = {}
+    for key, top in TARGET_MAX.items():
+        value = payload.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= top):
+            raise SettingsError(f"Hedef net 0 ile {top} arasında olmalı")
+        targets[key] = value
     return {
+        **targets,
+        "weather_alerts": payload["weather_alerts"],
+        "yks_date": yks,
+        "yks_estimated": payload["yks_estimated"],
         "briefing_time": _time(payload.get("briefing_time")),
         "sections": dict(sections),
         "photo_card": payload["photo_card"],
