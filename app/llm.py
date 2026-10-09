@@ -44,6 +44,8 @@ class LLM:
             "max_tokens": max_tokens,
             "temperature": 0.3,
         }
+        if "gpt-oss" in body["model"]:
+            body["reasoning_effort"] = "low"
         try:
             resp = await self.http.post(
                 f"{self.base_url}/chat/completions",
@@ -56,9 +58,12 @@ class LLM:
         if resp.status_code != 200:
             raise LLMError(f"LLM API hatası {resp.status_code}: {resp.text[:300]}")
         try:
-            return resp.json()["choices"][0]["message"]["content"] or ""
+            content = resp.json()["choices"][0]["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as e:
             raise LLMError(f"LLM yanıtı beklenmeyen biçimde: {resp.text[:300]}") from e
+        if not content or not content.strip():
+            raise LLMError("LLM boş yanıt döndü")
+        return content
 
     async def ask_json(self, prompt: str, system: str = "", image: bytes | None = None):
         return extract_json(await self.ask(prompt, system, image))

@@ -22,8 +22,8 @@ def test_load_defaults():
     assert cfg.port == 10000
     assert cfg.llm_key == "g"
     assert cfg.llm_base_url == "https://api.groq.com/openai/v1"
-    assert cfg.llm_model == "llama-3.3-70b-versatile"
-    assert cfg.llm_vision_model == "meta-llama/llama-4-scout-17b-16e-instruct"
+    assert cfg.llm_model == "openai/gpt-oss-120b"
+    assert cfg.llm_vision_model == "qwen/qwen3.8-27b"
 
 
 def test_load_overrides():

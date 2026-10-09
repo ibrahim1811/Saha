@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 LLM_DOWN = "⚠️ Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener misin?"
 
 HELP = (
-    "Merhaba Kayra! Yapabileceklerim:\n"
+    "Merhaba Kayra, ben Saha! Yapabileceklerim:\n"
     "📷 Ders programı fotoğrafı at → kaydederim\n"
     "🎤 Sesli mesaj at → nota çeviririm\n"
     "⏰ \"yarın 15'te faturayı hatırlat\" yaz → hatırlatırım\n"

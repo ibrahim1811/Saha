@@ -89,3 +89,22 @@ async def test_transport_error_wrapped():
 async def test_bad_response_shape_wrapped():
     with pytest.raises(LLMError):
         await _llm(lambda r: httpx.Response(200, json={"unexpected": True})).ask("x")
+
+
+async def test_empty_content_raises():
+    with pytest.raises(LLMError):
+        await _llm(lambda r: httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})).ask("x")
+
+
+async def test_reasoning_model_gets_low_effort():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await LLM("k", "https://api.test/v1", "openai/gpt-oss-120b", "v", http=http).ask("x")
+    assert seen["body"]["reasoning_effort"] == "low"
+    await _llm(handler).ask("x")
+    assert "reasoning_effort" not in seen["body"]

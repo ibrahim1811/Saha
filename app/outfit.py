@@ -5,7 +5,7 @@ from app.weather import DayWeather, summary
 log = logging.getLogger(__name__)
 
 SYSTEM = (
-    "Sen Kayra'nın kişisel asistanısın. Buca/İzmir için bugünkü havaya göre ne giymesi gerektiğini "
+    "Sen Saha'sın, Kayra'nın kişisel asistanı. Buca/İzmir için bugünkü havaya göre ne giymesi gerektiğini "
     "Türkçe, samimi ve en fazla 3 cümleyle söyle. Ceket, şemsiye gibi somut öneriler ver."
 )
 
@@ -29,7 +29,7 @@ async def advice(w: DayWeather, llm) -> str:
     h = hints(w)
     prompt = f"Bugünün havası: {summary(w)}. Kural ipuçları: {', '.join(h) or 'yok'}. Ne giymeliyim?"
     try:
-        return (await llm.ask(prompt, SYSTEM, max_tokens=200)).strip()
+        return (await llm.ask(prompt, SYSTEM, max_tokens=600)).strip()
     except Exception:
         log.exception("Kıyafet önerisi LLM'den alınamadı")
         return "\n".join(f"• {x}" for x in h) if h else "Hava ılıman, rahat giyinebilirsin."

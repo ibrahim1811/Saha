@@ -1,6 +1,6 @@
-# Günlük Ajan
+# Saha
 
-Kayra'nın kişisel Telegram asistanı: sabah özeti (hava + kıyafet önerisi, dersler, piyasa, haberler), ders programı, sesli not, hatırlatıcı, AI sohbet.
+Saha (@Saha_habercisi_bot) — Kayra'nın kişisel Telegram asistanı: sabah özeti (hava + kıyafet önerisi, dersler, piyasa, haberler), ders programı, sesli not, hatırlatıcı, AI sohbet.
 
 ## Gereken anahtarlar
 | Değişken | Nereden |
