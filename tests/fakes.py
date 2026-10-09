@@ -7,7 +7,7 @@ class FakeLLM:
         self.exc = exc
         self.calls = []
 
-    async def ask(self, prompt, system="", image=None, max_tokens=1024):
+    async def ask(self, prompt, system="", image=None, max_tokens=1024, reasoning=None):
         self.calls.append({"prompt": prompt, "system": system, "image": image})
         if self.exc:
             raise self.exc

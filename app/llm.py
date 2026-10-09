@@ -31,7 +31,7 @@ class LLM:
         self.vision_model = vision_model
         self.http = http or httpx.AsyncClient()
 
-    async def ask(self, prompt: str, system: str = "", image: bytes | None = None, max_tokens: int = 1024) -> str:
+    async def ask(self, prompt: str, system: str = "", image: bytes | None = None, max_tokens: int = 1024, reasoning: str | None = None) -> str:
         if image is None:
             user = prompt
         else:
@@ -45,7 +45,7 @@ class LLM:
             "temperature": 0.3,
         }
         if "gpt-oss" in body["model"]:
-            body["reasoning_effort"] = "low"
+            body["reasoning_effort"] = reasoning or "low"
         try:
             resp = await self.http.post(
                 f"{self.base_url}/chat/completions",

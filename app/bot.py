@@ -11,7 +11,7 @@ from telegram.ext import (
 
 from telegram.error import Conflict, NetworkError, TimedOut
 
-from app import briefing, card, chat, reminders, schedule, settings, tasks, weather
+from app import briefing, calendar_tr, card, chat, intents, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.textutil import split_message
 
@@ -21,7 +21,9 @@ LLM_DOWN = "⚠️ Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener mi
 
 HELP = (
     "Merhaba Kayra, ben Saha! Yapabileceklerim:\n"
-    "📷 Ders programı fotoğrafı at → kaydederim\n"
+    "📷 Fotoğraf at → ders programı, ders notu ya da soru çözümü\n"
+    "📊 \"fizik 1. yazılı 85\" → not, \"tyt deneme 78 net\" → deneme, \"bugün okula gitmedim\" → devamsızlık\n"
+    "🎤 Bunların hepsini sesli mesajla da söyleyebilirsin\n"
     "🎤 Sesli mesaj at → nota çeviririm\n"
     "⏰ \"yarın 15'te faturayı hatırlat\" yaz → hatırlatırım\n"
     "💬 Başka bir şey yaz → notlarına ve programına bakarak cevaplarım\n\n"
@@ -34,6 +36,20 @@ HELP = (
     "/odevler ödev ve sınavlar, /bitti <id> tamamlandı\n"
     "/hatirlaticilar bekleyen hatırlatıcılar\n"
     "/sil <id> hatırlatıcıyı sil"
+)
+PHOTO_MENU = InlineKeyboardMarkup([
+    [InlineKeyboardButton("📚 Ders programı", callback_data="pick:program")],
+    [InlineKeyboardButton("📝 Ders notu", callback_data="pick:note")],
+    [InlineKeyboardButton("❓ Soru çöz", callback_data="pick:solve")],
+])
+NOTE_PROMPT = (
+    "Bu bir ders notu ya da tahta fotoğrafı. İçindeki yazıyı düzgün Türkçe metin olarak aynen yaz; "
+    "formülleri düz metinle göster, okunmayan yerlere [?] koy. Sadece metni yaz."
+)
+SOLVE_OCR_PROMPT = "Bu bir sınav sorusu fotoğrafı. Soruyu ve varsa şıkları eksiksiz metin olarak aynen yaz. Sadece soruyu yaz, çözme."
+SOLVE_SYSTEM = (
+    "Sen bir YKS (TYT/AYT) öğretmenisin. Soruyu Türkçe, adım adım ve kısa çöz. "
+    "Gereksiz uzatma; her adımda ne yaptığını bir cümleyle söyle. En sonda ayrı satırda 'Cevap: X' yaz."
 )
 KIND_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("🏫 Okul (hafta içi)", callback_data="kind:okul:")],
@@ -79,6 +95,9 @@ COMMANDS = [
     BotCommand("notlar", "Son notlar"),
     BotCommand("hatirlaticilar", "Bekleyen hatırlatıcılar"),
     BotCommand("odevler", "Ödev ve sınavlar"),
+    BotCommand("yks", "YKS geri sayım ve deneme netleri"),
+    BotCommand("ortalama", "Ders notları ve ortalama"),
+    BotCommand("devamsizlik", "Devamsızlık durumu"),
 ]
 
 
@@ -206,7 +225,7 @@ async def notlar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     file = await update.message.photo[-1].get_file()
     data = bytes(await file.download_as_bytearray())
-    sent = await update.message.reply_text("Bu hangi program?", reply_markup=KIND_BUTTONS)
+    sent = await update.message.reply_text("Bu fotoğraf ne?", reply_markup=PHOTO_MENU)
     pending = context.user_data.setdefault("pending", {})
     pending[sent.message_id] = {"photo": data}
     while len(pending) > MAX_PENDING_PHOTOS:
@@ -233,6 +252,45 @@ async def _read_and_preview(query, context, item: dict) -> None:
     await query.edit_message_text(f"Şunu okudum:\n\n{_format(kind, data)[:3500]}\n\n{note}", reply_markup=markup)
 
 
+async def _read_note(query, context, item: dict) -> None:
+    d = _deps(context)
+    await query.edit_message_text("Notu okuyorum… ⏳")
+    try:
+        text = (await d["llm"].ask(NOTE_PROMPT, image=item["photo"], max_tokens=2000)).strip()
+    except Exception:
+        log.exception("Ders notu fotoğrafı okunamadı")
+        await query.edit_message_text("Notu okuyamadım, daha net bir fotoğraf atar mısın?")
+        return
+    okul = await d["db"].get_schedule("okul", "")
+    subjects: list[str] = []
+    for lessons in (okul or {}).values():
+        for lesson in lessons:
+            if lesson["ders"] not in subjects:
+                subjects.append(lesson["ders"])
+    subjects = subjects[:12]
+    item["note_text"] = text
+    item["subjects"] = subjects
+    buttons = [InlineKeyboardButton(s, callback_data=f"subj:{i}") for i, s in enumerate(subjects)]
+    buttons.append(InlineKeyboardButton("Diğer", callback_data="subj:-1"))
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    await query.edit_message_text(f"Şunu okudum:\n\n{text[:1500]}\n\nHangi derse ait?", reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def _solve(update, query, context, item: dict) -> None:
+    d = _deps(context)
+    await query.edit_message_text("Soruyu okuyorum… ⏳")
+    try:
+        question = (await d["llm"].ask(SOLVE_OCR_PROMPT, image=item["photo"], max_tokens=1500)).strip()
+        await query.edit_message_text("Çözüyorum… 🧠")
+        answer = (await d["llm"].ask(f"Soru:\n{question}", SOLVE_SYSTEM, max_tokens=4000, reasoning="medium")).strip()
+    except Exception:
+        log.exception("Soru çözülemedi")
+        await query.edit_message_text("Soruyu çözemedim, daha net bir fotoğraf atar mısın?")
+        return
+    await query.edit_message_text("✅ Çözüm aşağıda")
+    await send_text(context.bot, update.effective_chat.id, f"❓ {question[:1000]}\n\n{answer}")
+
+
 def _format(kind: str, data) -> str:
     return schedule.format_okul(data) if kind == "okul" else schedule.format_lessons(data)
 
@@ -249,7 +307,21 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if item is None:
         await query.edit_message_text("Bu fotoğrafı artık bulamıyorum, tekrar atar mısın?")
         return
-    if query.data.startswith("kind:"):
+    if query.data == "pick:program":
+        await query.edit_message_text("Bu hangi program?", reply_markup=KIND_BUTTONS)
+    elif query.data == "pick:note":
+        await _read_note(query, context, item)
+    elif query.data == "pick:solve":
+        await _solve(update, query, context, item)
+        pending.pop(query.message.message_id, None)
+    elif query.data.startswith("subj:") and "note_text" in item:
+        index = int(query.data.split(":")[1])
+        subject = item["subjects"][index] if 0 <= index < len(item["subjects"]) else None
+        await _deps(context)["db"].add_note(item["note_text"], "foto", subject)
+        pending.pop(query.message.message_id, None)
+        label = f" ({subject})" if subject else ""
+        await query.edit_message_text(f"📝 Not kaydedildi{label}:\n\n{item['note_text'][:3500]}")
+    elif query.data.startswith("kind:"):
         _, kind, day = query.data.split(":")
         item["kind"] = (kind, day)
         await _read_and_preview(query, context, item)
@@ -276,6 +348,11 @@ async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         log.exception("Ses yazıya çevrilemedi")
         await update.message.reply_text("Sesi yazıya çeviremedim. Ses mesajın sohbette duruyor, bana tekrar iletebilirsin.")
         return
+    kind = intents.route(text)
+    if kind:
+        await update.message.reply_text(f"🎤 {text}")
+        if await handle_intent(update, context, text, kind):
+            return
     await d["db"].add_note(text, "ses")
     await update.message.reply_text(f"📝 Kaydedildi: {text}")
 
@@ -380,12 +457,100 @@ async def bitti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("✅ Tamamlandı olarak işaretlendi." if done else "Bu numarada ödev ya da sınav yok.")
 
 
+async def _school_reply(update, coro, on_ok) -> bool:
+    try:
+        result = await coro
+    except school.NotThis:
+        return False
+    except school.SchoolError as e:
+        await update.message.reply_text(f"⚠️ {e}")
+        return True
+    except LLMError:
+        log.exception("Okul kaydı LLM ile ayrıştırılamadı")
+        await update.message.reply_text(LLM_DOWN)
+        return True
+    await update.message.reply_text(await on_ok(result))
+    return True
+
+
+async def _create_grade(update, context, message: str) -> bool:
+    d = _deps(context)
+
+    async def saved(result):
+        subject, label, score = result
+        grade_id = await d["db"].add_grade(subject, label, score)
+        return f"📊 Not kaydedildi: {subject} — {label}: {school.num(score)} (#{grade_id})\nOrtalamalar için /ortalama"
+
+    return await _school_reply(update, school.parse_grade(message, d["llm"]), saved)
+
+
+async def _create_absence(update, context, message: str) -> bool:
+    d = _deps(context)
+
+    async def saved(result):
+        day, excused, half = result
+        await d["db"].add_absence(day, excused, half)
+        totals = school.absence_totals(await d["db"].list_absences())
+        kind = ("özürlü" if excused else "özürsüz") + (", yarım gün" if half else "")
+        return f"📅 Devamsızlık kaydedildi: {day:%d.%m.%Y} ({kind})\n{school.absence_status(totals)}"
+
+    return await _school_reply(update, school.parse_absence(message, _now(context).date(), d["llm"]), saved)
+
+
+async def _create_exam(update, context, message: str) -> bool:
+    d = _deps(context)
+
+    async def saved(result):
+        kind, total, details = result
+        await d["db"].add_exam(kind, total, details, _now(context).date())
+        s = await load_settings(d)
+        summary = school.exam_summary(await d["db"].list_exams(), kind, s.get(f"target_{kind.lower()}"))
+        return f"🎯 {kind} denemesi kaydedildi: {school.num(total)} net" + (f"\n{summary}" if summary else "")
+
+    return await _school_reply(update, school.parse_exam(message, d["llm"]), saved)
+
+
+async def handle_intent(update, context, message: str, kind: str) -> bool:
+    if kind == "reminder":
+        await _create_reminder(update, context, message)
+        return True
+    handlers = {"task": _create_task, "grade": _create_grade, "absence": _create_absence, "exam": _create_exam}
+    return await handlers[kind](update, context, message)
+
+
+async def ortalama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    d = _deps(context)
+    subjects, overall = school.averages(await d["db"].list_grades(), school.subject_hours(await d["db"].get_schedule("okul", "")))
+    await send_text(context.bot, update.effective_chat.id, school.format_grades(subjects, overall))
+
+
+async def devamsizlik(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    rows = await _deps(context)["db"].list_absences()
+    lines = [school.absence_status(school.absence_totals(rows))]
+    for r in rows[:10]:
+        lines.append(f"• {r['day']:%d.%m.%Y} {'özürlü' if r['excused'] else 'özürsüz'}{' (yarım)' if r['half'] else ''}")
+    await send_text(context.bot, update.effective_chat.id, "\n".join(lines))
+
+
+async def yks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    d = _deps(context)
+    s = await load_settings(d)
+    today = _now(context).date()
+    lines = [calendar_tr.school_line(today, date.fromisoformat(s["yks_date"]), s["yks_estimated"])]
+    exams = await d["db"].list_exams()
+    for kind in ("TYT", "AYT"):
+        summary = school.exam_summary(exams, kind, s.get(f"target_{kind.lower()}"))
+        if summary:
+            lines.append(summary)
+    if len(lines) == 1:
+        lines.append('Deneme netlerini "tyt deneme 78 net" gibi yazarak ekleyebilirsin.')
+    await send_text(context.bot, update.effective_chat.id, "\n\n".join(lines))
+
+
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message.text
-    if is_reminder_request(message):
-        await _create_reminder(update, context, message)
-        return
-    if tasks.is_task_request(message) and await _create_task(update, context, message):
+    kind = intents.route(message)
+    if kind and await handle_intent(update, context, message, kind):
         return
     d = _deps(context)
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
@@ -421,6 +586,9 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("sil", sil))
     app.add_handler(CommandHandler("odevler", odevler))
     app.add_handler(CommandHandler("bitti", bitti))
+    app.add_handler(CommandHandler("yks", yks))
+    app.add_handler(CommandHandler("ortalama", ortalama))
+    app.add_handler(CommandHandler("devamsizlik", devamsizlik))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.VOICE, voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))

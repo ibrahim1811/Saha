@@ -238,7 +238,7 @@ async def test_pending_photos_capped():
     assert len(pending) == botmod.MAX_PENDING_PHOTOS and 300 not in pending and 312 in pending
 
 
-from datetime import date, datetime as _dt
+from datetime import date, datetime as _dt, timedelta
 
 
 @pytest.mark.parametrize("hour,minute,expected", [(6, 59, date(2026, 10, 9)), (7, 0, date(2026, 10, 10)), (22, 27, date(2026, 10, 10))])
@@ -397,3 +397,109 @@ async def test_sil_rejects_superscript():
     ctx.args = ["²"]
     await botmod.sil(update, ctx)
     assert "Kullanım" in update.message.reply_text.await_args.args[0]
+
+
+async def test_text_grade_saved():
+    llm = FakeLLM(reply='{"subject": "Fizik", "label": "1. yazılı", "score": 85}')
+    update = _msg_update("fizik 1. yazılı 85")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_grade=AsyncMock(return_value=4))
+    await botmod.text(update, ctx)
+    ctx.bot_data["db"].add_grade.assert_awaited_once_with("Fizik", "1. yazılı", 85.0)
+    assert "Fizik" in update.message.reply_text.await_args.args[0]
+
+
+async def test_text_exam_saved_with_today():
+    llm = FakeLLM(reply='{"kind": "TYT", "total": 78, "details": {}}')
+    update = _msg_update("tyt deneme 78 net")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_exam=AsyncMock(return_value=2), list_exams=AsyncMock(return_value=[]), get_settings=AsyncMock(return_value=None))
+    ctx.bot_data["cfg"].briefing_time = time(7, 0, tzinfo=TZ)
+    await botmod.text(update, ctx)
+    args = ctx.bot_data["db"].add_exam.await_args.args
+    assert args[:3] == ("TYT", 78.0, {}) and args[3] == _dt.now(TZ).date()
+
+
+async def test_text_absence_saved():
+    today = _dt.now(TZ).date()
+    llm = FakeLLM(reply=f'{{"day": "{today.isoformat()}", "excused": false, "half": false}}')
+    update = _msg_update("bugün okula gitmedim")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_absence=AsyncMock(return_value=1), list_absences=AsyncMock(return_value=[{"excused": False, "half": False}]))
+    await botmod.text(update, ctx)
+    ctx.bot_data["db"].add_absence.assert_awaited_once_with(today, False, False)
+    assert "Özürsüz 1/10" in update.message.reply_text.await_args.args[0]
+
+
+async def test_voice_command_creates_task_instead_of_note():
+    due = (_dt.now(TZ) + timedelta(days=2)).date()
+    llm = FakeLLM(reply=f'{{"kind": "odev", "title": "Fizik ödevi", "due": "{due.isoformat()}"}}')
+    update = _msg_update(None)
+    update.message.voice = SimpleNamespace(get_file=AsyncMock(return_value=_File(b"ogg")))
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["transcriber"] = SimpleNamespace(transcribe=AsyncMock(return_value="fizik ödevi cuma teslim"))
+    ctx.bot_data["db"] = SimpleNamespace(add_task=AsyncMock(return_value=9), add_note=AsyncMock())
+    await botmod.voice(update, ctx)
+    ctx.bot_data["db"].add_task.assert_awaited_once()
+    ctx.bot_data["db"].add_note.assert_not_awaited()
+
+
+async def test_voice_plain_still_saved_as_note():
+    update = _msg_update(None)
+    update.message.voice = SimpleNamespace(get_file=AsyncMock(return_value=_File(b"ogg")))
+    ctx = _msg_ctx(FakeLLM())
+    ctx.bot_data["transcriber"] = SimpleNamespace(transcribe=AsyncMock(return_value="süt almayı unutma"))
+    ctx.bot_data["db"] = SimpleNamespace(add_note=AsyncMock())
+    await botmod.voice(update, ctx)
+    ctx.bot_data["db"].add_note.assert_awaited_once_with("süt almayı unutma", "ses")
+
+
+async def test_photo_menu_first_asks_purpose():
+    ctx = SimpleNamespace(user_data={}, bot_data={})
+    upd = _photo_update(b"img", 500)
+    await botmod.photo(upd, ctx)
+    markup = upd.message.reply_text.await_args.kwargs["reply_markup"]
+    assert [b.callback_data for row in markup.inline_keyboard for b in row] == ["pick:program", "pick:note", "pick:solve"]
+
+
+async def test_pick_program_shows_kind_buttons():
+    ctx = SimpleNamespace(user_data={"pending": {500: {"photo": b"img"}}}, bot_data={})
+    update = _query_update("pick:program", 500)
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == "kind:okul:"
+
+
+async def test_solve_flow_uses_vision_then_text_model():
+    llm = FakeLLM(reply="Soru: 2+2=? A) 3 B) 4")
+    db = SimpleNamespace()
+    ctx = SimpleNamespace(user_data={"pending": {500: {"photo": b"img"}}}, bot_data={"llm": llm, "db": db, "cfg": SimpleNamespace(owner_id=42, tz=TZ)}, bot=SimpleNamespace(send_message=AsyncMock()))
+    update = _query_update("pick:solve", 500)
+    update.effective_chat = SimpleNamespace(id=42)
+    await botmod.on_button(update, ctx)
+    assert llm.calls[0]["image"] == b"img" and llm.calls[1]["image"] is None
+    assert "2+2" in llm.calls[1]["prompt"]
+    assert 500 not in ctx.user_data["pending"]
+
+
+async def test_note_flow_saves_with_subject():
+    llm = FakeLLM(reply="Newton'un 2. yasası F = m·a")
+    db = SimpleNamespace(get_schedule=AsyncMock(return_value={"pazartesi": [{"saat": "", "ders": "Fizik"}, {"saat": "", "ders": "Kimya"}]}), add_note=AsyncMock(return_value=3))
+    ctx = SimpleNamespace(user_data={"pending": {500: {"photo": b"img"}}}, bot_data={"llm": llm, "db": db, "cfg": SimpleNamespace(owner_id=42, tz=TZ)})
+    update = _query_update("pick:note", 500)
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    assert "Fizik" in labels and "Kimya" in labels and "Diğer" in labels
+    fizik = [b.callback_data for row in markup.inline_keyboard for b in row if b.text == "Fizik"][0]
+    await botmod.on_button(_query_update(fizik, 500), ctx)
+    db.add_note.assert_awaited_once_with("Newton'un 2. yasası F = m·a", "foto", "Fizik")
+
+
+async def test_yks_command():
+    update = _msg_update("/yks")
+    ctx = _msg_ctx(None)
+    ctx.bot_data["cfg"].briefing_time = time(7, 0, tzinfo=TZ)
+    ctx.bot_data["db"] = SimpleNamespace(get_settings=AsyncMock(return_value=None), list_exams=AsyncMock(return_value=[]))
+    await botmod.yks(update, ctx)
+    assert "YKS" in ctx.bot.send_message.await_args.args[1]
