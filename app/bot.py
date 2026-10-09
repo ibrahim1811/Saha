@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -9,7 +10,7 @@ from telegram.ext import (
 
 from telegram.error import Conflict, NetworkError
 
-from app import briefing, chat, reminders, schedule
+from app import briefing, card, chat, reminders, schedule, settings, weather
 from app.llm import LLMError
 from app.textutil import split_message
 
@@ -64,11 +65,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(HELP)
 
 
+async def load_settings(bot_data) -> dict:
+    return settings.merge(await bot_data["db"].get_settings(), bot_data["cfg"].briefing_time.strftime("%H:%M"))
+
+
+def reschedule_briefing(job_queue, time_str: str, tz: ZoneInfo) -> None:
+    for job in job_queue.get_jobs_by_name("sabah-ozeti"):
+        job.schedule_removal()
+    hour, minute = map(int, time_str.split(":"))
+    job_queue.run_daily(send_briefing, time=time(hour, minute, tzinfo=tz), name="sabah-ozeti", data=time_str)
+
+
+async def build_briefing(bot_data, today) -> tuple[briefing.Briefing, dict]:
+    s = await load_settings(bot_data)
+    src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s)
+    return await briefing.build(today, src, s), s
+
+
+def photo_caption(info: briefing.WeatherInfo) -> str:
+    return f"🌤 Buca — {weather.summary(info.w)}\n👕 {info.advice}"[:1024]
+
+
 async def send_briefing(context: ContextTypes.DEFAULT_TYPE) -> None:
     d = _deps(context)
+    owner = d["cfg"].owner_id
     today = _now(context).date()
-    src = briefing.make_sources(d["cfg"], d["db"], d["llm"], d["http"], today)
-    await send_text(context.bot, d["cfg"].owner_id, await briefing.build(today, src))
+    result, s = await build_briefing(d, today)
+    if s["photo_card"] and result.weather:
+        try:
+            png = card.render_card(result.weather.w, result.weather.hints, today)
+            await context.bot.send_photo(owner, png, caption=photo_caption(result.weather))
+        except Exception:
+            log.exception("Hava kartı gönderilemedi, metne dönülüyor")
+        else:
+            await send_text(context.bot, owner, result.text_without_weather)
+            return
+    await send_text(context.bot, owner, result.text)
 
 
 async def ozet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -250,5 +282,3 @@ def register(app: Application) -> None:
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_error_handler(on_error)
-    cfg = app.bot_data["cfg"]
-    app.job_queue.run_daily(send_briefing, time=cfg.briefing_time, name="sabah-ozeti")

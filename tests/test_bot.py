@@ -65,3 +65,67 @@ async def test_on_error_ignores_polling_conflict():
     ctx.error = Conflict("terminated by other getUpdates request")
     await botmod.on_error(None, ctx)
     ctx.bot.send_message.assert_not_awaited()
+
+
+from datetime import time
+
+from telegram.ext import Application
+
+from app import briefing as briefing_mod
+from app import card as card_mod
+from app.briefing import Briefing, WeatherInfo
+from app.weather import DayWeather
+
+TZ = ZoneInfo("Europe/Istanbul")
+INFO = WeatherInfo(DayWeather(11, 27, 12, 22, 0, 10), "İnce ceket al.", ["ceket al"])
+RESULT = Briefing(header="Günaydın", text="Günaydın\n\n🌤 Hava\nx\n\n📚 Dersler", text_without_weather="Günaydın\n\n📚 Dersler", weather=INFO)
+
+
+def _brief_ctx():
+    cfg = SimpleNamespace(owner_id=42, tz=TZ, briefing_time=time(7, 0, tzinfo=TZ))
+    return SimpleNamespace(
+        bot_data={"cfg": cfg, "llm": None, "http": None, "db": SimpleNamespace(get_settings=AsyncMock(return_value=None))},
+        bot=SimpleNamespace(send_photo=AsyncMock(), send_message=AsyncMock()),
+    )
+
+
+def _patch_build(monkeypatch, result=RESULT):
+    async def fake_build(today, src, settings):
+        return result
+    monkeypatch.setattr(briefing_mod, "make_sources", lambda *a, **k: None)
+    monkeypatch.setattr(briefing_mod, "build", fake_build)
+
+
+async def test_send_briefing_with_photo_card(monkeypatch):
+    _patch_build(monkeypatch)
+    ctx = _brief_ctx()
+    await botmod.send_briefing(ctx)
+    ctx.bot.send_photo.assert_awaited_once()
+    assert "👕 İnce ceket al." in ctx.bot.send_photo.await_args.kwargs["caption"]
+    assert ctx.bot.send_message.await_args.args[1] == "Günaydın\n\n📚 Dersler"
+
+
+async def test_send_briefing_card_error_falls_back_to_text(monkeypatch):
+    _patch_build(monkeypatch)
+    monkeypatch.setattr(card_mod, "render_card", lambda *a: (_ for _ in ()).throw(OSError("font yok")))
+    ctx = _brief_ctx()
+    await botmod.send_briefing(ctx)
+    ctx.bot.send_photo.assert_not_awaited()
+    assert ctx.bot.send_message.await_args.args[1] == RESULT.text
+
+
+async def test_send_briefing_photo_disabled(monkeypatch):
+    _patch_build(monkeypatch)
+    ctx = _brief_ctx()
+    ctx.bot_data["db"].get_settings = AsyncMock(return_value={"photo_card": False})
+    await botmod.send_briefing(ctx)
+    ctx.bot.send_photo.assert_not_awaited()
+    assert ctx.bot.send_message.await_args.args[1] == RESULT.text
+
+
+def test_reschedule_replaces_job():
+    app = Application.builder().token("123:abc").build()
+    botmod.reschedule_briefing(app.job_queue, "07:00", TZ)
+    botmod.reschedule_briefing(app.job_queue, "08:15", TZ)
+    jobs = app.job_queue.get_jobs_by_name("sabah-ozeti")
+    assert len(jobs) == 1 and jobs[0].data == "08:15"

@@ -16,3 +16,12 @@ def test_parse_limit():
 def test_parse_empty_raises():
     with pytest.raises(ValueError):
         parse("<rss><channel></channel></rss>")
+
+
+async def test_fetch_respects_limit():
+    import httpx
+
+    from app.news import fetch
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=RSS)))
+    assert await fetch(http, 1) == "• Birinci haber"

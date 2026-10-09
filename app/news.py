@@ -10,7 +10,7 @@ def parse(xml: str, limit: int = 5) -> list[str]:
     return titles
 
 
-async def fetch(http) -> str:
+async def fetch(http, limit: int = 5) -> str:
     resp = await http.get(FEED, timeout=10, follow_redirects=True)
     resp.raise_for_status()
-    return "\n".join(f"• {t}" for t in parse(resp.text))
+    return "\n".join(f"• {t}" for t in parse(resp.text, limit))

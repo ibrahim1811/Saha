@@ -40,6 +40,8 @@ async def _post_init(app: Application) -> None:
     app.bot_data["llm"] = LLM(cfg.llm_key, cfg.llm_base_url, cfg.llm_model, cfg.llm_vision_model, http=http)
     app.bot_data["db"] = await DB.connect(cfg.database_url)
     await bot.restore_reminders(app)
+    s = await bot.load_settings(app.bot_data)
+    bot.reschedule_briefing(app.job_queue, s["briefing_time"], cfg.tz)
     log.info("Bot hazır")
 
 
