@@ -270,9 +270,9 @@ def test_alerts_ignore_past_hours():
 
 def test_alerts_sudden_drop_and_rain_soon():
     temps = [22.0] * 16 + [21.0, 18.0, 14.0, 13.0, 12.0, 12.0, 12.0, 12.0]
-    w = _alert_weather(hourly=tuple(temps), rain_hours=(13, 14), rain_prob=70)
+    w = _alert_weather(hourly=tuple(temps), rain_hours=(13, 14, 15), shower_hours=(13, 14), rain_prob=70)
     kinds = dict(weather.alerts(w, 12))
-    assert "15:00'den sonra" in kinds["drop"] and "22° → 14°" in kinds["drop"]
+    assert "16:00'den sonra" in kinds["drop"] and "22° → 14°" in kinds["drop"]
     assert "13:00–15:00" in kinds["rain"]
     assert "rain" not in dict(weather.alerts(w, 9))
 
@@ -292,3 +292,16 @@ def test_metno_hourly_wind_and_storm():
     ]}}
     w = parse_metno(data, date(2026, 10, 10), TZ)
     assert w.hourly_wind[14] == 36.0 and w.storm_hours == (14,)
+
+
+
+def test_light_rain_and_slow_evening_cooling_do_not_alert():
+    temps = [22.0] * 16 + [20.0, 18.0, 16.0, 14.0, 13.0, 13.0, 13.0, 13.0]
+    w = _alert_weather(hourly=tuple(temps), rain_hours=(13, 14), rain_prob=45)
+    assert weather.alerts(w, 12) == []
+
+
+def test_openmeteo_shower_hours():
+    d = _om()
+    d["hourly"]["precipitation_probability"] = [0] * 14 + [45, 75, 80, 30] + [0] * 6
+    assert parse_openmeteo(d).shower_hours == (15, 16)

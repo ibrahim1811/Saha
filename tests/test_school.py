@@ -76,3 +76,13 @@ def test_exam_summary_with_target():
     assert exam_summary([], "TYT", 95) is None
     assert "Hedefe" not in exam_summary(exams, "TYT", None)
     assert "Hedefin üzerindesin" in exam_summary(exams, "TYT", 70)
+
+
+def test_school_year_rows():
+    from app.school import school_year_rows
+
+    rows = [{"day": date(2026, 6, 1), "excused": False, "half": False},
+            {"day": date(2026, 9, 20), "excused": False, "half": False},
+            {"day": date(2027, 3, 1), "excused": True, "half": False}]
+    assert [r["day"] for r in school_year_rows(rows, date(2027, 3, 5))] == [date(2026, 9, 20), date(2027, 3, 1)]
+    assert [r["day"] for r in school_year_rows(rows, date(2026, 7, 1))] == [date(2026, 6, 1)]

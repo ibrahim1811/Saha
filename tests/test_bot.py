@@ -425,7 +425,7 @@ async def test_text_absence_saved():
     llm = FakeLLM(reply=f'{{"day": "{today.isoformat()}", "excused": false, "half": false}}')
     update = _msg_update("bugün okula gitmedim")
     ctx = _msg_ctx(llm)
-    ctx.bot_data["db"] = SimpleNamespace(add_absence=AsyncMock(return_value=1), list_absences=AsyncMock(return_value=[{"excused": False, "half": False}]))
+    ctx.bot_data["db"] = SimpleNamespace(add_absence=AsyncMock(return_value=1), list_absences=AsyncMock(return_value=[{"day": today, "excused": False, "half": False}]))
     await botmod.text(update, ctx)
     ctx.bot_data["db"].add_absence.assert_awaited_once_with(today, False, False)
     assert "Özürsüz 1/10" in update.message.reply_text.await_args.args[0]
@@ -540,3 +540,42 @@ async def test_weather_alert_job_respects_setting_and_quiet_hours(monkeypatch):
     ctx.bot_data["db"].get_settings = AsyncMock(return_value={"weather_alerts": False})
     await botmod.weather_alert_job(ctx)
     assert called == []
+
+
+async def test_exam_not_this_falls_back_to_task():
+    due = (_dt.now(TZ) + timedelta(days=2)).date()
+
+    class SeqLLM(FakeLLM):
+        def __init__(self, replies):
+            super().__init__()
+            self.replies = replies
+
+        async def ask(self, prompt, system="", image=None, max_tokens=1024, reasoning=None):
+            self.calls.append({"prompt": prompt, "system": system, "image": image})
+            return self.replies.pop(0)
+
+    llm = SeqLLM(['{"kind": null}', f'{{"kind": "sinav", "title": "3. deneme sınavı", "due": "{due.isoformat()}"}}'])
+    update = _msg_update("cumartesi 3. deneme sınavı var")
+    ctx = _msg_ctx(llm)
+    ctx.bot_data["db"] = SimpleNamespace(add_task=AsyncMock(return_value=5))
+    await botmod.text(update, ctx)
+    ctx.bot_data["db"].add_task.assert_awaited_once_with("sinav", "3. deneme sınavı", due)
+
+
+async def test_alert_marked_sent_only_after_success(monkeypatch):
+    from app import weather as wmod
+    from app.weather import DayWeather
+
+    temps = [25.0] * 14 + [37.0] * 10
+
+    async def fake_fetch(*a, **k):
+        return DayWeather(20, 37, 22, 37, 0, 10, tuple(temps), "clear")
+
+    monkeypatch.setattr(wmod, "fetch", fake_fetch)
+    monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 10, 11, 0, tzinfo=TZ))
+    ctx = _brief_ctx()
+    ctx.bot_data["cfg"].lat, ctx.bot_data["cfg"].lon = 38.39, 27.17
+    ctx.bot.send_message = AsyncMock(side_effect=[RuntimeError("ağ"), None])
+    await botmod.weather_alert_job(ctx)
+    await botmod.weather_alert_job(ctx)
+    assert ctx.bot.send_message.await_count == 2

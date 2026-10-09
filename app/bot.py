@@ -207,8 +207,12 @@ async def weather_alert_job(context) -> None:
         key = (now.date(), kind)
         if key in sent:
             continue
+        try:
+            await context.bot.send_message(cfg.owner_id, message)
+        except Exception as e:
+            log.warning("Hava uyarısı gönderilemedi (%s): %r", kind, e)
+            continue
         sent.add(key)
-        await context.bot.send_message(cfg.owner_id, message)
 
 
 def schedule_weather_alerts(job_queue) -> None:
@@ -521,7 +525,7 @@ async def _create_absence(update, context, message: str) -> bool:
     async def saved(result):
         day, excused, half = result
         await d["db"].add_absence(day, excused, half)
-        totals = school.absence_totals(await d["db"].list_absences())
+        totals = school.absence_totals(school.school_year_rows(await d["db"].list_absences(), _now(context).date()))
         kind = ("özürlü" if excused else "özürsüz") + (", yarım gün" if half else "")
         return f"📅 Devamsızlık kaydedildi: {day:%d.%m.%Y} ({kind})\n{school.absence_status(totals)}"
 
@@ -546,7 +550,9 @@ async def handle_intent(update, context, message: str, kind: str) -> bool:
         await _create_reminder(update, context, message)
         return True
     handlers = {"task": _create_task, "grade": _create_grade, "absence": _create_absence, "exam": _create_exam}
-    return await handlers[kind](update, context, message)
+    if await handlers[kind](update, context, message):
+        return True
+    return kind != "task" and tasks.is_task_request(message) and await _create_task(update, context, message)
 
 
 async def ortalama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -556,7 +562,7 @@ async def ortalama(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def devamsizlik(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    rows = await _deps(context)["db"].list_absences()
+    rows = school.school_year_rows(await _deps(context)["db"].list_absences(), _now(context).date())
     lines = [school.absence_status(school.absence_totals(rows))]
     for r in rows[:10]:
         lines.append(f"• {r['day']:%d.%m.%Y} {'özürlü' if r['excused'] else 'özürsüz'}{' (yarım)' if r['half'] else ''}")

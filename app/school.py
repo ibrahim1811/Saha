@@ -114,6 +114,12 @@ async def parse_absence(message: str, today: date, llm) -> tuple[date, bool, boo
     return parse_absence_result(await llm.ask_json(prompt, ABSENCE_SYSTEM), today)
 
 
+def school_year_rows(rows: list[dict], today: date) -> list[dict]:
+    start = date(today.year if today.month >= 9 else today.year - 1, 9, 1)
+    end = date(start.year + 1, 8, 31)
+    return [r for r in rows if start <= r["day"] <= end]
+
+
 def absence_totals(rows: list[dict]) -> dict[str, float]:
     unexcused = sum(0.5 if r["half"] else 1.0 for r in rows if not r["excused"])
     excused = sum(0.5 if r["half"] else 1.0 for r in rows if r["excused"])

@@ -17,6 +17,10 @@ from app.intents import route
     ("devamsızlığım ne kadar?", None),
     ("sınavım kötü geçti", None),
     ("bugün ne var", None),
+    ("matematikten 85 aldım", "grade"),
+    ("matematik sınavından 85 aldım", "grade"),
+    ("bugün fizikten 90 aldım", "grade"),
+    ("yarın okula gitmeyeceğim", None),
 ])
 def test_route(text, expected):
     assert route(text) == expected

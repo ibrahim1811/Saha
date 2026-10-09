@@ -15,6 +15,7 @@ METNO_UA = "saha-bot/1.0 github.com/ibrahim1811/Saha"
 RETRY_DELAY = 1.0
 CACHE_TTL = 900
 RAIN_PROB_THRESHOLD = 40
+SHOWER_PROB_THRESHOLD = 70
 _CACHE: dict[tuple, tuple[float, "DayWeather"]] = {}
 
 CONDITION_TR = {
@@ -41,6 +42,7 @@ class DayWeather:
     rain_hours: tuple[int, ...] = ()
     hourly_wind: tuple[float | None, ...] = ()
     storm_hours: tuple[int, ...] = ()
+    shower_hours: tuple[int, ...] = ()
 
 
 def condition_from_wmo(code: int | None) -> str:
@@ -87,6 +89,7 @@ def parse_openmeteo(data: dict, index: int = 0) -> DayWeather:
         condition=condition_from_wmo(codes[index] if len(codes) > index else None),
         rain_hours=tuple(h for h, p in enumerate(probs) if p is not None and p >= RAIN_PROB_THRESHOLD),
         hourly_wind=tuple((data["hourly"].get("wind_speed_10m") or [])[24 * index : 24 * index + 24]),
+        shower_hours=tuple(h for h, p in enumerate(probs) if p is not None and p >= SHOWER_PROB_THRESHOLD),
         storm_hours=tuple(h for h, c in enumerate((data["hourly"].get("weather_code") or [])[24 * index : 24 * index + 24]) if c is not None and c >= 95),
     )
 
@@ -96,6 +99,7 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
     winds: list[float] = []
     precip = 0.0
     rain_hours: list[int] = []
+    showers: list[int] = []
     winds_by_hour: dict[int, float] = {}
     storms: list[int] = []
     symbols: dict[int, str] = {}
@@ -114,6 +118,8 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         if amount >= 0.1:
             span = 1 if one else 6
             rain_hours.extend(range(local.hour, min(24, local.hour + span)))
+            if amount / span >= 1:
+                showers.extend(range(local.hour, min(24, local.hour + span)))
         if "summary" in nxt:
             symbols[local.hour] = nxt["summary"]["symbol_code"]
             if "thunder" in nxt["summary"]["symbol_code"]:
@@ -133,6 +139,7 @@ def parse_metno(data: dict, today: date, tz: ZoneInfo) -> DayWeather:
         rain_hours=tuple(sorted(set(rain_hours))),
         hourly_wind=tuple(winds_by_hour.get(h) for h in range(24)),
         storm_hours=tuple(sorted(set(storms))),
+        shower_hours=tuple(sorted(set(showers))),
     )
 
 
@@ -245,11 +252,11 @@ def alerts(w: DayWeather, from_hour: int) -> list[tuple[str, str]]:
             out.append(("wind", f"💨 Kuvvetli rüzgâr bekleniyor: {strongest:.0f} km/s (en çok {hour:02d}:00)."))
     values = dict(temps)
     for hour, temp in temps:
-        ahead = [values[h] for h in range(hour + 1, hour + 5) if h in values]
+        ahead = [values[h] for h in range(hour + 1, hour + 4) if h in values]
         if ahead and temp - min(ahead) >= DROP_LIMIT:
             out.append(("drop", f"🥶 {hour + 1:02d}:00'den sonra hava hızla soğuyor ({temp:.0f}° → {min(ahead):.0f}°). Yanına kalın bir şey al."))
             break
-    soon = tuple(h for h in w.rain_hours if from_hour <= h <= from_hour + 2)
+    soon = tuple(h for h in w.shower_hours if from_hour <= h <= from_hour + 2)
     if soon:
         out.append(("rain", f"☔ 1-2 saat içinde yağmur bekleniyor ({', '.join(_ranges(soon))}). Şemsiyeni unutma."))
     return out

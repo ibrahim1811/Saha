@@ -249,7 +249,7 @@ async def get_school(request):
     today = _now(d["cfg"].tz).date()
     yks = date.fromisoformat(s["yks_date"])
     subjects, overall = school.averages(await db.list_grades(), school.subject_hours(await db.get_schedule("okul", "")))
-    rows = await db.list_absences()
+    rows = school.school_year_rows(await db.list_absences(), today)
     exams = await db.list_exams()
     return _json({
         "yks": {"date": yks, "estimated": s["yks_estimated"], "days_left": (yks - today).days},
