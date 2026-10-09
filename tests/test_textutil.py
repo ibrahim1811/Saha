@@ -19,3 +19,7 @@ def test_hard_splits_long_line():
 
 def test_empty():
     assert split_message("") == [""]
+
+
+def test_default_limit_leaves_headroom():
+    assert all(len(p) <= 4000 for p in split_message("x" * 9000))

@@ -281,3 +281,46 @@ async def test_ozet_command_sends_next_briefing_day(monkeypatch):
     monkeypatch.setattr(botmod, "_now", lambda context: _dt(2026, 10, 9, 22, 27, tzinfo=TZ))
     await botmod.ozet(SimpleNamespace(), _brief_ctx())
     assert asked["day"] == date(2026, 10, 10)
+
+
+async def test_keepalive_pings_public_health():
+    http = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(status_code=200)))
+    cfg = SimpleNamespace(public_url="https://saha-q2hh.onrender.com")
+    await botmod.keep_alive(SimpleNamespace(bot_data={"cfg": cfg, "http": http}))
+    assert http.get.await_args.args[0] == "https://saha-q2hh.onrender.com/health"
+
+
+async def test_keepalive_failure_is_logged_not_raised(caplog):
+    http = SimpleNamespace(get=AsyncMock(side_effect=RuntimeError("down")))
+    cfg = SimpleNamespace(public_url="https://x")
+    await botmod.keep_alive(SimpleNamespace(bot_data={"cfg": cfg, "http": http}))
+    assert "down" in caplog.text
+
+
+def test_keepalive_scheduled_only_with_public_url():
+    app = Application.builder().token("123:abc").build()
+    botmod.schedule_keep_alive(app.job_queue, None)
+    assert app.job_queue.get_jobs_by_name("uyanik-tut") == ()
+    botmod.schedule_keep_alive(app.job_queue, "https://x")
+    assert len(app.job_queue.get_jobs_by_name("uyanik-tut")) == 1
+
+
+@pytest.mark.parametrize("text,is_reminder", [
+    ("yarın 15'te faturayı hatırlat", True),
+    ("YARIN FATURAYI HATIRLAT", True),
+    ("Hatırlat bana su içmeyi", True),
+    ("neyi hatırlatmıştım?", False),
+    ("bugün ne var", False),
+])
+def test_reminder_intent(text, is_reminder):
+    assert botmod.is_reminder_request(text) is is_reminder
+
+
+async def test_photo_timeout_does_not_resend_weather(monkeypatch):
+    from telegram.error import TimedOut
+
+    _patch_build(monkeypatch)
+    ctx = _brief_ctx()
+    ctx.bot.send_photo = AsyncMock(side_effect=TimedOut())
+    await botmod.send_briefing(ctx)
+    assert ctx.bot.send_message.await_args.args[1] == RESULT.text_without_weather

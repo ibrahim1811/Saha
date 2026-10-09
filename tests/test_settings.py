@@ -37,3 +37,8 @@ def test_validate_ok():
 def test_validate_rejects(patch):
     with pytest.raises(SettingsError):
         validate({**DEFAULTS, **patch})
+
+
+def test_validate_requires_one_section():
+    with pytest.raises(SettingsError, match="en az bir"):
+        validate({**DEFAULTS, "sections": {s: False for s in DEFAULTS["sections"]}})

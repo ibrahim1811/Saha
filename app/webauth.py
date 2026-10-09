@@ -26,7 +26,10 @@ def verify_init_data(init_data: str, bot_token: str, max_age: int = 86400, now: 
         int(user["id"])
     except (KeyError, ValueError, TypeError) as e:
         raise AuthError("Telegram verisi eksik") from e
-    if (time.time() if now is None else now) - auth_date > max_age:
+    current = time.time() if now is None else now
+    if auth_date - current > 60:
+        raise AuthError("Telegram verisinin tarihi ileride")
+    if current - auth_date > max_age:
         raise AuthError("Oturum süresi dolmuş, paneli yeniden aç")
     return user
 

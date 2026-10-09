@@ -22,6 +22,7 @@ async def _post_init(app: Application) -> None:
     await bot.restore_reminders(app)
     s = await bot.load_settings(app.bot_data)
     bot.reschedule_briefing(app.job_queue, s["briefing_time"], cfg.tz)
+    bot.schedule_keep_alive(app.job_queue, cfg.public_url)
     try:
         await bot.setup_menu(app)
     except Exception:

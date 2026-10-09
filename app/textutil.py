@@ -1,4 +1,4 @@
-def split_message(text: str, limit: int = 4096) -> list[str]:
+def split_message(text: str, limit: int = 4000) -> list[str]:
     parts, current = [], ""
     for line in text.split("\n"):
         while len(line) > limit:

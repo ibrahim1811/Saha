@@ -8,7 +8,7 @@ from telegram.ext import (
     TypeHandler, filters,
 )
 
-from telegram.error import Conflict, NetworkError
+from telegram.error import Conflict, NetworkError, TimedOut
 
 from app import briefing, card, chat, reminders, schedule, settings, weather
 from app.llm import LLMError
@@ -42,6 +42,7 @@ CONFIRM_BUTTONS = InlineKeyboardMarkup([[
     InlineKeyboardButton("🔁 Tekrar oku", callback_data="retry"),
 ]])
 MAX_PENDING_PHOTOS = 10
+KEEP_ALIVE_SECONDS = 600
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
@@ -134,12 +135,33 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = N
         try:
             png = card.render_card(result.weather.w, result.weather.hints, today)
             await context.bot.send_photo(owner, png, caption=photo_caption(result.weather))
+        except TimedOut:
+            log.warning("Hava kartı zaman aşımına uğradı, büyük ihtimalle ulaştı; hava tekrar gönderilmiyor")
         except Exception:
             log.exception("Hava kartı gönderilemedi, metne dönülüyor")
-        else:
-            await send_text(context.bot, owner, result.text_without_weather)
+            await send_text(context.bot, owner, result.text)
             return
+        await send_text(context.bot, owner, result.text_without_weather)
+        return
     await send_text(context.bot, owner, result.text)
+
+
+async def keep_alive(context) -> None:
+    d = _deps(context)
+    try:
+        await d["http"].get(f"{d['cfg'].public_url}/health", timeout=15)
+    except Exception as e:
+        log.warning("Uyanık tutma isteği başarısız: %r", e)
+
+
+def schedule_keep_alive(job_queue, public_url: str | None) -> None:
+    if public_url:
+        job_queue.run_repeating(keep_alive, interval=KEEP_ALIVE_SECONDS, first=60, name="uyanik-tut")
+
+
+def is_reminder_request(text: str) -> bool:
+    normalized = text.replace("İ", "i").replace("I", "ı").lower().strip()
+    return "hatırlat" in normalized and not normalized.endswith("?")
 
 
 async def ozet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -307,7 +329,7 @@ async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message.text
-    if "hatırlat" in message.lower():
+    if is_reminder_request(message):
         await _create_reminder(update, context, message)
         return
     d = _deps(context)

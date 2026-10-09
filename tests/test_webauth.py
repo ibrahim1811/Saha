@@ -36,3 +36,8 @@ def test_expired_rejected():
 def test_garbage_rejected(data):
     with pytest.raises(AuthError):
         verify_init_data(data, TOKEN, now=1)
+
+
+def test_future_auth_date_rejected():
+    with pytest.raises(AuthError):
+        verify_init_data(sign_init_data(USER, TOKEN, 1_000_000 + 3600), TOKEN, now=1_000_000)

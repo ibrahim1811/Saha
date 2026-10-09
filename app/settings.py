@@ -41,6 +41,8 @@ def validate(payload) -> dict:
     sections = payload.get("sections")
     if not isinstance(sections, dict) or set(sections) != set(SECTIONS) or not all(isinstance(v, bool) for v in sections.values()):
         raise SettingsError("Bölümler eksik ya da hatalı")
+    if not any(sections.values()):
+        raise SettingsError("Özette en az bir bölüm açık olmalı")
     if not isinstance(payload.get("photo_card"), bool):
         raise SettingsError("Fotoğraf kartı açık/kapalı olmalı")
     count = payload.get("news_count")
