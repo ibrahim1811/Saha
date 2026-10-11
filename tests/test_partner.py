@@ -117,7 +117,7 @@ async def test_kus_and_baris_flow():
     with pytest.raises(ApplicationHandlerStop):
         await botmod.gate(_upd(99, partner.KUS), ctx)
     assert "kus" in db.values
-    assert "küstü" in ctx.bot.send_message.await_args.args[1]
+    assert "BOYKOT BAŞLADI" in ctx.bot.send_message.await_args.args[1]
     assert ctx.job_queue.run_repeating.call_args.kwargs["name"] == "kus-hatirlat"
 
     db.values["kus"] = {"since": (datetime.now(TZ) - timedelta(minutes=30)).isoformat()}
@@ -139,7 +139,23 @@ async def test_partner_cannot_reach_owner_handlers():
     upd = _upd(99, "/notlar")
     with pytest.raises(ApplicationHandlerStop):
         await botmod.gate(upd, ctx)
-    assert "Ben Saha" in upd.message.reply_text.await_args.args[0]
+    assert "Saha rehberi" in upd.message.reply_text.await_args.args[0]
+
+
+async def test_old_kus_button_still_works():
+    db = KV()
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(_upd(99, "😤 Küstüm"), _ctx(db))
+    assert "kus" in db.values
+
+
+async def test_help_button_sends_guide():
+    upd = _upd(99, partner.YARDIM)
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(upd, _ctx(KV()))
+    reply = upd.message.reply_text.await_args
+    assert "Boykot başlasın" in reply.args[0] and "07:00" in reply.args[0]
+    assert reply.kwargs["reply_markup"].keyboard[1][0].text == partner.YARDIM
 
 
 async def test_claim_invite():

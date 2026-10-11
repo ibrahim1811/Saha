@@ -10,9 +10,11 @@ QUIET_START, QUIET_END = 0, 8
 KUS_INTERVAL_SECONDS = 3600
 EVENING_TIME = "23:00"
 
-KUS = "😤 Küstüm"
+KUS = "😤 Boykot başlasın"
+KUS_ALIASES = {KUS, "😤 Küstüm"}
 BARIS = "🕊 Barıştık"
 OZLEDIM = "🥺 Özledim"
+YARDIM = "❓ Nasıl kullanılır"
 
 DEFAULTS = {"briefing_time": "07:00", "evening_enabled": True, "news_topics": ["gundem", "yasam"]}
 SELF_KEYS = set(DEFAULTS)
@@ -82,14 +84,34 @@ def targets_partner(message: str, name: str | None) -> bool:
 
 
 def keyboard_rows(kus: bool) -> list[list[str]]:
-    return [[BARIS if kus else KUS, OZLEDIM]]
+    return [[BARIS if kus else KUS, OZLEDIM], [YARDIM]]
 
 
 def welcome(name: str) -> str:
     return (
-        f"Merhaba {name}! 🌸 Ben Saha.\n"
-        "Her sabah sana hava, ders programı ve seçtiğin haberleri getireceğim; gece 23:00'te de günün özeti gelecek.\n\n"
-        f"{KUS}: Kayra'ya hemen haber veririm 😤\n"
-        f"{OZLEDIM}: Kayra'ya özlediğini iletirim\n"
-        "Panel'den haber konularını ve saatini seçebilirsin."
+        f"Merhaba {name}! 🌸 Ben Saha, Kayra seni buraya senin için ekledi.\n\n"
+        "Nasıl kullanacağını hemen anlatayım 👇 İstediğin zaman alttaki "
+        f"\"{YARDIM}\" butonuna basıp bu rehberi tekrar açabilirsin."
+    )
+
+
+def guide(name: str, briefing_time: str) -> str:
+    return (
+        f"📖 Saha rehberi\n\n"
+        f"☀️ Sabah özeti — her sabah {briefing_time}'da gelir:\n"
+        "• Hava durumu ve ne giysem önerisi\n"
+        "• O günün dersleri\n"
+        "• Seçtiğin konulardan haberler, her biri tek cümle\n"
+        "• Kayra bir not bıraktıysa en altta 💌\n\n"
+        "🌙 Gece 23:00 özeti: günün haberleri, yarının dersleri ve havası.\n\n"
+        "⬇️ Alttaki butonlar:\n"
+        f"• {KUS} — Kayra'ya anında 🚨 alarm gider; barışana kadar saatte bir hatırlatılır 😤\n"
+        f"• {BARIS} — boykot biter, Kayra'ya ne kadar sürdüğü bildirilir\n"
+        f"• {OZLEDIM} — Kayra'ya özlediğini iletirim\n\n"
+        "⚙️ Panel (sol alttaki Panel düğmesi):\n"
+        "• Hangi konularda haber geleceğini seç (gündem, yaşam, spor, sağlık…)\n"
+        "• Sabah özeti saatini değiştir\n"
+        "• Gece özetini aç/kapat\n"
+        "Değiştirdikten sonra alttaki Kaydet'e basman yeterli.\n\n"
+        f"Hepsi bu kadar {name} 💕"
     )

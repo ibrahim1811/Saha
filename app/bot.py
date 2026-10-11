@@ -396,7 +396,7 @@ async def kus_reminder(context) -> None:
     if partner.is_quiet(now):
         return
     since = partner.duration(datetime.fromisoformat(state["since"]), now)
-    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {p['name']} hâlâ küs ({since}). Gönlünü aldın mı? 🌹")
+    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {p['name']} hâlâ boykotta ({since}). Gönlünü aldın mı? 🌹")
 
 
 async def restore_kus(app: Application) -> None:
@@ -432,6 +432,7 @@ async def claim_invite(update, context) -> bool:
     except Exception:
         log.exception("Partner menüsü kurulamadı")
     await msg.reply_text(partner.welcome(p["name"]), reply_markup=partner_keyboard(False))
+    await msg.reply_text(partner.guide(p["name"], p["briefing_time"]), reply_markup=partner_keyboard(False))
     await context.bot.send_message(d["cfg"].owner_id, f"💕 {p['name']} Saha'ya katıldı! Ayarlarını panelde 💕 sekmesinden yönetebilirsin.")
     return True
 
@@ -446,22 +447,22 @@ async def partner_update(update, context) -> None:
     d = _deps(context)
     p, owner, now, text = d["partner"], d["cfg"].owner_id, _now(context), msg.text.strip()
     state = await d["db"].get_kv("kus")
-    if text == partner.KUS:
+    if text in partner.KUS_ALIASES:
         if state:
-            await msg.reply_text(f"Zaten küssün 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+            await msg.reply_text(f"Boykot zaten sürüyor 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
             return
         await d["db"].set_kv("kus", {"since": now.isoformat()})
         schedule_kus(context.job_queue)
-        await context.bot.send_message(owner, f"🚨 {p['name']} sana küstü! Hemen gönlünü al 🌹")
-        await msg.reply_text(f"Tamam, Kayra'ya haber verdim 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+        await context.bot.send_message(owner, f"🚨 BOYKOT BAŞLADI! {p['name']} seni boykot ediyor. Hemen gönlünü al 🌹")
+        await msg.reply_text(f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
     elif text == partner.BARIS:
         if not state:
-            await msg.reply_text("Zaten küs değilsin 🙂", reply_markup=partner_keyboard(False))
+            await msg.reply_text("Şu an boykot yok 🙂", reply_markup=partner_keyboard(False))
             return
         await d["db"].delete_kv("kus")
         stop_kus(context.job_queue)
         since = partner.duration(datetime.fromisoformat(state["since"]), now)
-        await context.bot.send_message(owner, f"🕊 {p['name']} ile barıştınız! {since} küs kaldı.")
+        await context.bot.send_message(owner, f"🕊 {p['name']} boykotu bitirdi, barıştınız! Boykot {since} sürdü.")
         await msg.reply_text("🕊 Barıştınız! Kayra'ya haber verdim 💕", reply_markup=partner_keyboard(False))
     elif text == partner.OZLEDIM:
         await context.bot.send_message(owner, f"🥺 {p['name']} seni özledi!")
@@ -469,7 +470,7 @@ async def partner_update(update, context) -> None:
     elif text.startswith("/panel"):
         await panel(update, context)
     else:
-        await msg.reply_text(partner.welcome(p["name"]), reply_markup=partner_keyboard(bool(state)))
+        await msg.reply_text(partner.guide(p["name"], p["briefing_time"]), reply_markup=partner_keyboard(bool(state)))
 
 
 async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

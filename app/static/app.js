@@ -277,7 +277,7 @@
     $("tab-love").textContent = data.partner.name;
     $("love-name").textContent = "💕 " + data.partner.name;
     $("love-head").dataset.kus = !!data.kus;
-    $("love-status").textContent = data.kus ? `😤 Sana küs, ${data.kus_for} oldu` : "Barışıksınız 🕊";
+    $("love-status").textContent = data.kus ? `😤 Boykot sürüyor, ${data.kus_for} oldu` : "Barışıksınız 🕊";
     $("love-lines-block").hidden = !data.lines.length;
     $("love-lines").textContent = data.lines.join("\n");
     $("lnotes").innerHTML = data.notes.length
