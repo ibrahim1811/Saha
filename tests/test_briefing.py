@@ -91,10 +91,16 @@ async def test_tasks_section_in_morning():
 
 
 async def test_evening_header_and_sections():
-    src = _src(tasks=_ok("yok"), finance=_boom, news=_boom)
+    src = _src(tasks=_ok("yok"), finance=_boom, news=_ok("• Haber"))
     b = await build(date(2026, 10, 10), src, _settings(), evening=True)
     assert b.text.startswith("🌙 İyi geceler Kayra! Yarın 10 Ekim Cumartesi")
-    assert "💱" not in b.text and "📰" not in b.text and "📌" in b.text and "📚" in b.text
+    assert "💱" not in b.text and "📌" in b.text and "📚 Yarının dersleri" in b.text
+    assert "📰 Günün haberleri\n• Haber" in b.text
+
+
+async def test_partner_name_and_top_lines():
+    b = await build(date(2026, 10, 10), _src(), _settings(), name="İlayda", top_lines=["❤️ Biz: 5. gün"])
+    assert b.text.startswith("Günaydın İlayda! ☀️ 10 Ekim Cumartesi\n\n❤️ Biz: 5. gün")
 
 
 async def test_rain_alert_right_after_header():

@@ -25,7 +25,7 @@ Saha'yı İlayda için hafif bir partner profiliyle kullanılabilir yapmak: küs
 - Owner sabah özetine özel gün sayacı eklenir; önemli güne 3 gün kala owner'a hatırlatma.
 
 ## Haberler
-- Konular: gundem (BBC Türkçe), teknoloji, bilim, ekonomi, spor, saglik, eglence, dunya (Google News TR konu RSS).
+- Konular: gundem (BBC Türkçe), turkiye, dunya, ekonomi, teknoloji, saglik, yasam, egitim, spor, otomobil (NTV kategori RSS; özet içerir — Google News yalnızca başlık verdiği için seçilmedi).
 - `news.fetch(http, limit, topics)`: konular paralel çekilir, aynı haberler ayıklanır, hatalı konu atlanır, hepsi hatalıysa hata.
 - Owner ayarına `news_topics` (varsayılan `["teknoloji"]`).
 

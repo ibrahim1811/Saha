@@ -60,6 +60,20 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL
 );
+ALTER TABLE reminders ADD COLUMN IF NOT EXISTS target TEXT NOT NULL DEFAULT 'owner' CHECK (target IN ('owner', 'partner'));
+CREATE TABLE IF NOT EXISTS love_notes (
+    id SERIAL PRIMARY KEY,
+    text TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    delivered_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS special_days (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    day DATE NOT NULL,
+    yearly BOOLEAN NOT NULL DEFAULT true,
+    counter BOOLEAN NOT NULL DEFAULT false
+);
 """
 
 
@@ -105,15 +119,52 @@ class DB:
         return result.endswith(" 1")
 
     async def get_settings(self) -> dict | None:
-        raw = await self.pool.fetchval("SELECT value FROM settings WHERE key = 'main'")
-        return json.loads(raw) if raw is not None else None
+        return await self.get_kv("main")
 
     async def save_settings(self, value: dict) -> None:
+        await self.set_kv("main", value)
+
+    async def get_kv(self, key: str):
+        raw = await self.pool.fetchval("SELECT value FROM settings WHERE key = $1", key)
+        return json.loads(raw) if raw is not None else None
+
+    async def set_kv(self, key: str, value) -> None:
         await self.pool.execute(
-            "INSERT INTO settings (key, value) VALUES ('main', $1::jsonb) "
+            "INSERT INTO settings (key, value) VALUES ($1, $2::jsonb) "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-            json.dumps(value, ensure_ascii=False),
+            key, json.dumps(value, ensure_ascii=False),
         )
+
+    async def delete_kv(self, key: str) -> None:
+        await self.pool.execute("DELETE FROM settings WHERE key = $1", key)
+
+    async def add_love_note(self, text: str) -> int:
+        return await self.pool.fetchval("INSERT INTO love_notes (text) VALUES ($1) RETURNING id", text)
+
+    async def pending_love_notes(self) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, text, created_at FROM love_notes WHERE delivered_at IS NULL ORDER BY created_at, id"
+        )
+        return [dict(r) for r in rows]
+
+    async def mark_love_note_delivered(self, note_id: int) -> None:
+        await self.pool.execute("UPDATE love_notes SET delivered_at = now() WHERE id = $1", note_id)
+
+    async def delete_love_note(self, note_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM love_notes WHERE id = $1", note_id)).endswith(" 1")
+
+    async def add_special_day(self, name: str, day: date, yearly: bool, counter: bool) -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO special_days (name, day, yearly, counter) VALUES ($1, $2, $3, $4) RETURNING id",
+            name, day, yearly, counter,
+        )
+
+    async def list_special_days(self) -> list[dict]:
+        rows = await self.pool.fetch("SELECT id, name, day, yearly, counter FROM special_days ORDER BY day, id")
+        return [dict(r) for r in rows]
+
+    async def delete_special_day(self, day_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM special_days WHERE id = $1", day_id)).endswith(" 1")
 
     async def add_note(self, text: str, source: str, subject: str | None = None) -> int:
         return await self.pool.fetchval(
@@ -208,13 +259,13 @@ class DB:
         result = await self.pool.execute("DELETE FROM tasks WHERE id = $1", task_id)
         return result.endswith(" 1")
 
-    async def add_reminder(self, text: str, due_at: datetime) -> int:
+    async def add_reminder(self, text: str, due_at: datetime, target: str = "owner") -> int:
         return await self.pool.fetchval(
-            "INSERT INTO reminders (text, due_at) VALUES ($1, $2) RETURNING id", text, due_at
+            "INSERT INTO reminders (text, due_at, target) VALUES ($1, $2, $3) RETURNING id", text, due_at, target
         )
 
     async def pending_reminders(self) -> list[dict]:
-        rows = await self.pool.fetch("SELECT id, text, due_at FROM reminders WHERE NOT sent ORDER BY due_at")
+        rows = await self.pool.fetch("SELECT id, text, due_at, target FROM reminders WHERE NOT sent ORDER BY due_at")
         return [dict(r) for r in rows]
 
     async def mark_sent(self, reminder_id: int) -> None:

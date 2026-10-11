@@ -20,7 +20,8 @@ SECTIONS = [
     ("finance", "💱 Piyasa", "Piyasa"),
     ("news", "📰 Haberler", "Haberler"),
 ]
-EVENING_SECTIONS = {"weather", "lessons", "tasks"}
+EVENING_SECTIONS = {"weather", "lessons", "tasks", "news"}
+EVENING_TITLES = {"lessons": "📚 Yarının dersleri", "news": "📰 Günün haberleri"}
 WEATHER_SECTION = SECTIONS[1]
 
 
@@ -52,15 +53,18 @@ class Briefing:
     weather: WeatherInfo | None
 
 
-def header(today: date, evening: bool = False) -> str:
+def header(today: date, evening: bool = False, name: str = "Kayra") -> str:
     day = f"{today.day} {MONTHS[today.month - 1]} {DAYS[today.weekday()]}"
-    return f"🌙 İyi geceler Kayra! Yarın {day}" if evening else f"Günaydın Kayra! ☀️ {day}"
+    return f"🌙 İyi geceler {name}! Yarın {day}" if evening else f"Günaydın {name}! ☀️ {day}"
 
 
-async def build(today: date, src: Sources, settings: dict, evening: bool = False, from_hour: int = 0) -> Briefing:
+async def build(
+    today: date, src: Sources, settings: dict, evening: bool = False, from_hour: int = 0,
+    name: str = "Kayra", top_lines: list[str] | tuple = (),
+) -> Briefing:
     enabled = [s for s in SECTIONS if settings["sections"].get(s[0]) and (not evening or s[0] in EVENING_SECTIONS)]
     if evening:
-        enabled = [(a, t.replace("Bugünün", "Yarının"), l) for a, t, l in enabled]
+        enabled = [(a, EVENING_TITLES.get(a, t), l) for a, t, l in enabled]
     show_weather = any(a == "weather" for a, _, _ in enabled)
     fetch = enabled if show_weather else [WEATHER_SECTION] + enabled
     results = await asyncio.gather(*(getattr(src, attr)() for attr, _, _ in fetch), return_exceptions=True)
@@ -71,7 +75,7 @@ async def build(today: date, src: Sources, settings: dict, evening: bool = False
             log.warning("Yağmur uyarısı için hava alınamadı: %r", hidden)
     else:
         alert_info = None
-    head = header(today, evening)
+    head = header(today, evening, name)
     parts: list[tuple[str, str]] = []
     info = None
     for (attr, title, label), result in zip(enabled, results):
@@ -85,6 +89,8 @@ async def build(today: date, src: Sources, settings: dict, evening: bool = False
             body = result
         parts.append((attr, f"{title}\n{body}"))
     top = [head]
+    if top_lines:
+        top.append("\n".join(top_lines))
     source = info or alert_info
     alert = weather.rain_warning(source.w, from_hour) if source else None
     if alert:
@@ -97,12 +103,16 @@ async def build(today: date, src: Sources, settings: dict, evening: bool = False
     )
 
 
-def make_sources(cfg, db, llm, http, today: date, settings: dict, ref_day: date | None = None) -> Sources:
+def make_sources(
+    cfg, db, llm, http, today: date, settings: dict, ref_day: date | None = None, school_only: bool = False,
+) -> Sources:
     async def weather_section() -> WeatherInfo:
         w = await weather.fetch(cfg.lat, cfg.lon, cfg.tz.key, http, today)
         return WeatherInfo(w, await outfit.advice(w, llm), outfit.hints(w))
 
     async def lessons_section() -> str:
+        if school_only and today.weekday() >= 5:
+            return format_lessons([])
         return format_lessons(await lessons_for(today, db))
 
     async def tasks_section() -> str:
@@ -123,6 +133,6 @@ def make_sources(cfg, db, llm, http, today: date, settings: dict, ref_day: date 
         weather=weather_section,
         lessons=lessons_section,
         finance=lambda: finance.fetch(http),
-        news=lambda: news.fetch(http, settings["news_count"]),
+        news=lambda: news.fetch(http, settings["news_count"], settings.get("news_topics")),
         tasks=tasks_section,
     )

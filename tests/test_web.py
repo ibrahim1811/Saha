@@ -58,6 +58,28 @@ class Store:
     async def delete_reminder(self, rid):
         return self.reminders.pop(rid, None) is not None
 
+    kv: dict = {}
+    love_notes: list = []
+
+    async def get_kv(self, key):
+        return self.kv.get(key)
+
+    async def set_kv(self, key, value):
+        self.kv = {**self.kv, key: value}
+
+    async def delete_kv(self, key):
+        self.kv = {k: v for k, v in self.kv.items() if k != key}
+
+    async def add_love_note(self, text):
+        self.love_notes = [*self.love_notes, {"id": len(self.love_notes) + 1, "text": text}]
+        return len(self.love_notes)
+
+    async def pending_love_notes(self):
+        return self.love_notes
+
+    async def list_special_days(self):
+        return []
+
 
 def _tg(llm=None):
     cfg = SimpleNamespace(owner_id=42, tz=TZ, telegram_token=TOKEN, briefing_time=time(7, 0, tzinfo=TZ))
@@ -92,6 +114,35 @@ async def test_api_requires_auth(client):
     assert (await client.get("/api/settings")).status == 401
     assert (await client.get("/api/settings", headers={"Authorization": "tma hash=x&auth_date=1"})).status == 401
     assert (await client.get("/api/settings", headers=_auth(7))).status == 403
+
+
+PARTNER = {"id": 99, "name": "İlayda", "briefing_time": "07:00", "evening_enabled": True, "news_topics": ["gundem"]}
+
+
+async def test_partner_only_reaches_own_endpoints(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    me = await (await client.get("/api/me", headers=_auth(99))).json()
+    assert me["role"] == "partner" and me["name"] == "İlayda" and me["topics"]
+    for path in ("/api/settings", "/api/notes", "/api/partner", "/api/school"):
+        assert (await client.get(path, headers=_auth(99))).status == 403
+    resp = await client.put("/api/partner/self", json={"briefing_time": "08:00", "evening_enabled": False, "news_topics": ["spor"]}, headers=_auth(99))
+    assert resp.status == 200
+    assert client.tg.bot_data["partner"]["news_topics"] == ["spor"]
+    assert client.tg.bot_data["db"].kv["partner"]["briefing_time"] == "08:00"
+    names = [c.kwargs["name"] for c in client.tg.job_queue.run_daily.call_args_list]
+    assert names == ["partner-sabah"]
+
+
+async def test_owner_partner_panel(client):
+    assert (await client.get("/api/partner/self", headers=_auth())).status == 404
+    client.tg.bot.username = "SahaBot"
+    link = (await (await client.post("/api/partner/invite", headers=_auth())).json())["link"]
+    assert link.startswith("https://t.me/SahaBot?start=")
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    assert (await client.post("/api/love-notes", json={"text": "Seni seviyorum"}, headers=_auth())).status == 200
+    data = await (await client.get("/api/partner", headers=_auth())).json()
+    assert data["partner"]["name"] == "İlayda" and data["notes"][0]["text"] == "Seni seviyorum" and data["kus"] is None
+    assert (await client.post("/api/love-notes", json={"text": " "}, headers=_auth())).status == 400
 
 
 async def test_settings_get_put(client):

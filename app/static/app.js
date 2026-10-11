@@ -7,7 +7,10 @@
   const $ = (id) => document.getElementById(id);
   const TRASH = '<svg viewBox="0 0 24 24"><path d="M5 7h14M10 11v6M14 11v6M7 7l1 13h8l1-13M9.5 7V4.5h5V7"/></svg>';
 
-  const state = { view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null, showDone: false };
+  const state = {
+    view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null, showDone: false,
+    role: "owner", topics: [], love: null, pSaved: null, pDraft: null, meSaved: null, meDraft: null,
+  };
   const KIND_ICON = { odev: "📝", sinav: "🧪" };
 
   function haptic(type) {
@@ -99,6 +102,8 @@
     if (name === "notes") loadNotes().catch(fail);
     if (name === "today") loadToday().catch(fail);
     if (name === "school") loadSchool().catch(fail);
+    if (name === "love") loadLove().catch(fail);
+    if (name === "me") loadMe().catch(fail);
   }
 
   function skyLine(hourly) {
@@ -231,8 +236,110 @@
     $("set-evening-time").disabled = !s.evening_enabled;
     document.querySelectorAll("[data-section]").forEach((el) => (el.checked = s.sections[el.dataset.section]));
     $("news-count").textContent = s.news_count;
+    renderChips($("set-topics"), s.news_topics);
     const dirty = JSON.stringify(s) !== JSON.stringify(state.settings);
     setMainButton("Kaydet", dirty ? saveSettings : null);
+  }
+
+  function renderChips(el, selected) {
+    el.innerHTML = state.topics
+      .map((t) => `<button type="button" data-topic="${esc(t.key)}" aria-pressed="${selected.includes(t.key)}">${esc(t.label)}</button>`)
+      .join("");
+  }
+
+  function bindChips(el, getDraft, render) {
+    el.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-topic]");
+      if (!b) return;
+      const draft = getDraft();
+      const key = b.dataset.topic;
+      if (draft.news_topics.includes(key)) {
+        if (draft.news_topics.length === 1) return toast("En az bir konu seçili kalmalı");
+        draft.news_topics = draft.news_topics.filter((k) => k !== key);
+      } else {
+        draft.news_topics = [...draft.news_topics, key];
+      }
+      render();
+    });
+  }
+
+  const pick = (o) => ({ name: o.name, briefing_time: o.briefing_time, evening_enabled: o.evening_enabled, news_topics: [...o.news_topics] });
+
+  function renderLove() {
+    const data = state.love;
+    $("love-invite").hidden = !!data.partner;
+    $("love-main").hidden = !data.partner;
+    if (!data.partner) {
+      setMainButton(null, null);
+      return;
+    }
+    const d = state.pDraft;
+    $("tab-love").textContent = data.partner.name;
+    $("love-name").textContent = "💕 " + data.partner.name;
+    $("love-head").dataset.kus = !!data.kus;
+    $("love-status").textContent = data.kus ? `😤 Sana küs, ${data.kus_for} oldu` : "Barışıksınız 🕊";
+    $("love-lines-block").hidden = !data.lines.length;
+    $("love-lines").textContent = data.lines.join("\n");
+    $("lnotes").innerHTML = data.notes.length
+      ? data.notes.map((n, i) => `<div class="item"><span class="item-time">${i === 0 ? "Sıradaki" : ""}</span><div class="item-main"><p class="item-title">${esc(n.text)}</p></div><button class="icon-btn" data-lnote="${n.id}" aria-label="Notu sil">${TRASH}</button></div>`).join("")
+      : '<p class="empty">Bekleyen not yok.</p>';
+    $("days").innerHTML = data.days.length
+      ? data.days.map((r) => `<div class="item"><div class="item-main"><p class="item-title">${esc(r.name)}</p><p class="item-sub">${new Date(r.day + "T12:00:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" })}${r.yearly ? " · her yıl" : ""}${r.counter ? " · gün sayılıyor" : ""}</p></div><button class="icon-btn" data-day="${r.id}" aria-label="Günü sil">${TRASH}</button></div>`).join("")
+      : '<p class="empty">Henüz özel gün yok.</p>';
+    if (document.activeElement !== $("p-name")) $("p-name").value = d.name;
+    $("p-time").value = d.briefing_time;
+    $("p-evening").checked = d.evening_enabled;
+    renderChips($("p-topics"), d.news_topics);
+    const dirty = JSON.stringify(d) !== JSON.stringify(state.pSaved);
+    setMainButton("Kaydet", dirty ? savePartner : null);
+  }
+
+  async function loadLove() {
+    state.love = await api("GET", "/api/partner");
+    if (state.love.partner) {
+      state.pSaved = pick(state.love.partner);
+      state.pDraft = pick(state.love.partner);
+    }
+    renderLove();
+  }
+
+  async function savePartner() {
+    state.love.partner = await api("PUT", "/api/partner", state.pDraft);
+    state.pSaved = pick(state.love.partner);
+    state.pDraft = pick(state.love.partner);
+    renderLove();
+    toast("Kaydedildi");
+  }
+
+  async function createInvite() {
+    const r = await api("POST", "/api/partner/invite");
+    $("invite-link").hidden = false;
+    $("invite-link").textContent = r.link;
+    const share = `https://t.me/share/url?url=${encodeURIComponent(r.link)}&text=${encodeURIComponent("Saha'ya katıl 💕")}`;
+    if (tg && tg.openTelegramLink) tg.openTelegramLink(share);
+    else if (navigator.clipboard) navigator.clipboard.writeText(r.link).then(() => toast("Link kopyalandı"), () => {});
+  }
+
+  function renderMe() {
+    const d = state.meDraft;
+    $("me-time").value = d.briefing_time;
+    $("me-evening").checked = d.evening_enabled;
+    renderChips($("me-topics"), d.news_topics);
+    const dirty = JSON.stringify(d) !== JSON.stringify(state.meSaved);
+    setMainButton("Kaydet", dirty ? saveMe : null);
+  }
+
+  async function loadMe() {
+    state.meSaved = await api("GET", "/api/partner/self");
+    state.meDraft = structuredClone(state.meSaved);
+    renderMe();
+  }
+
+  async function saveMe() {
+    state.meSaved = await api("PUT", "/api/partner/self", state.meDraft);
+    state.meDraft = structuredClone(state.meSaved);
+    renderMe();
+    toast(`Kaydedildi. Özetin her gün ${state.meSaved.briefing_time}'da gelecek`);
   }
 
   async function loadSettings() {
@@ -578,6 +685,84 @@
       state.settingsDraft.news_count = Math.min(10, state.settingsDraft.news_count + 1);
       renderSettings();
     });
+    bindChips($("set-topics"), () => state.settingsDraft, renderSettings);
+    bindChips($("p-topics"), () => state.pDraft, renderLove);
+    bindChips($("me-topics"), () => state.meDraft, renderMe);
+
+    $("p-name").addEventListener("input", (e) => {
+      state.pDraft.name = e.target.value.trim();
+      renderLove();
+    });
+    $("p-time").addEventListener("change", (e) => {
+      if (e.target.value) state.pDraft.briefing_time = e.target.value;
+      renderLove();
+    });
+    $("p-evening").addEventListener("change", (e) => {
+      state.pDraft.evening_enabled = e.target.checked;
+      renderLove();
+    });
+    $("me-time").addEventListener("change", (e) => {
+      if (e.target.value) state.meDraft.briefing_time = e.target.value;
+      renderMe();
+    });
+    $("me-evening").addEventListener("change", (e) => {
+      state.meDraft.evening_enabled = e.target.checked;
+      renderMe();
+    });
+    $("btn-invite").addEventListener("click", () => createInvite().catch(fail));
+    $("lnote-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = $("lnote-input");
+      const text = input.value.trim();
+      if (!text) return;
+      input.disabled = true;
+      try {
+        await api("POST", "/api/love-notes", { text });
+        input.value = "";
+        haptic("success");
+        toast("Not bırakıldı 💌");
+        await loadLove();
+      } catch (err) {
+        fail(err);
+      } finally {
+        input.disabled = false;
+      }
+    });
+    $("day-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const body = { name: $("day-name").value.trim(), day: $("day-date").value, yearly: $("day-yearly").checked, counter: $("day-counter").checked };
+      try {
+        await api("POST", "/api/special-days", body);
+        $("day-name").value = "";
+        haptic("success");
+        toast("Özel gün eklendi");
+        await loadLove();
+      } catch (err) {
+        fail(err);
+      }
+    });
+    $("view-love").addEventListener("click", async (e) => {
+      const note = e.target.closest("[data-lnote]");
+      const day = e.target.closest("[data-day]");
+      if (!note && !day) return;
+      if (!(await confirmAsk(note ? "Bu not silinsin mi?" : "Bu özel gün silinsin mi?"))) return;
+      try {
+        await api("DELETE", note ? "/api/love-notes/" + note.dataset.lnote : "/api/special-days/" + day.dataset.day);
+        await loadLove();
+      } catch (err) {
+        fail(err);
+      }
+    });
+    $("btn-unpair").addEventListener("click", async () => {
+      if (!(await confirmAsk("Bağlantı kaldırılsın mı? Özetleri ve butonları duracak."))) return;
+      try {
+        await api("DELETE", "/api/partner");
+        $("tab-love").textContent = "Sevgilim";
+        await loadLove();
+      } catch (err) {
+        fail(err);
+      }
+    });
 
     $("prog-kind").addEventListener("click", (e) => {
       const b = e.target.closest("button");
@@ -673,8 +858,25 @@
       return;
     }
     bind();
-    const initial = new URLSearchParams(location.search).get("view");
-    showView(["today", "program", "notes", "school", "settings"].includes(initial) ? initial : "today");
+    api("GET", "/api/me")
+      .then((me) => {
+        state.role = me.role;
+        state.topics = me.topics;
+        if (me.role === "partner") {
+          $("tabs").hidden = true;
+          $("me-name").textContent = `Merhaba ${me.name} 🌸`;
+          showView("me");
+          return;
+        }
+        const initial = new URLSearchParams(location.search).get("view");
+        showView(["today", "program", "notes", "school", "love", "settings"].includes(initial) ? initial : "today");
+      })
+      .catch((err) => {
+        document.querySelectorAll(".view").forEach((v) => (v.hidden = true));
+        $("tabs").hidden = true;
+        $("gate").hidden = false;
+        $("gate-text").textContent = err.message;
+      });
   }
 
   start();

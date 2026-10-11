@@ -191,7 +191,80 @@
           </div>
         </div>
       </div>
+      <h2 class="group">Haber konuların</h2>
+      <div class="block"><div class="chips" id="set-topics"></div></div>
+      <p class="foot">Haberler seçtiğin konulardan sırayla, her biri tek cümlelik özetle gelir.</p>
+
       <p class="foot">Değişiklikler alttaki Kaydet düğmesiyle kaydedilir. Saat hemen geçerli olur.</p>
+    </section>
+
+    <section class="view" id="view-love" data-title="Sevgilim" hidden>
+      <div id="love-invite" hidden>
+        <header class="love-head">
+          <p class="love-name">💕 Sevgilin</p>
+          <p class="love-status">Henüz Saha'da değil</p>
+        </header>
+        <div class="block">
+          <p class="empty">Davet linki oluştur ve ona gönder. Linke tıklayıp Başlat'a basınca bağlanır. Link 24 saat geçerli ve tek kullanımlık.</p>
+          <p class="invite-link" id="invite-link" hidden></p>
+          <button class="btn btn-primary btn-wide" id="btn-invite">Davet linki oluştur</button>
+          <p class="empty"></p>
+        </div>
+      </div>
+
+      <div id="love-main" hidden>
+        <header class="love-head" id="love-head">
+          <p class="love-name" id="love-name"></p>
+          <p class="love-status" id="love-status"></p>
+        </header>
+        <div class="block" id="love-lines-block" hidden><p class="love-lines" id="love-lines"></p></div>
+
+        <h2 class="group">Ona not bırak</h2>
+        <form class="block compose" id="lnote-form">
+          <input id="lnote-input" type="text" autocomplete="off" maxlength="1000" placeholder="Bugün sınavın var, başaracaksın 💪" aria-label="Yeni not">
+          <button class="btn btn-primary" type="submit">Bırak</button>
+        </form>
+        <div class="block" id="lnotes"></div>
+        <p class="foot">Her sabah sıradaki not, özetinin sonunda "💌 Kayra'dan not" olarak gider.</p>
+
+        <h2 class="group">Özetleri</h2>
+        <div class="block">
+          <label class="row"><span>İsim</span><input type="text" class="txt" id="p-name" maxlength="40" autocomplete="off"></label>
+          <label class="row"><span>Sabah özeti saati</span><input type="time" id="p-time" required></label>
+          <label class="row"><span>23:00 gece özeti</span><input type="checkbox" class="switch" id="p-evening"></label>
+        </div>
+
+        <h2 class="group">Haber konuları</h2>
+        <div class="block"><div class="chips" id="p-topics"></div></div>
+
+        <h2 class="group">Özel günler</h2>
+        <form class="block abs-form day-form" id="day-form">
+          <input type="text" id="day-name" maxlength="60" autocomplete="off" placeholder="Tanışma günümüz" aria-label="Gün adı">
+          <input type="date" id="day-date" required aria-label="Tarih">
+          <label class="mini"><input type="checkbox" class="check" id="day-yearly" checked>Her yıl</label>
+          <label class="mini"><input type="checkbox" class="check" id="day-counter">Gün say</label>
+          <button class="btn btn-primary" type="submit">Ekle</button>
+        </form>
+        <div class="block" id="days"></div>
+        <p class="foot">"Gün say" açıksa sabah özetinde "❤️ 213. gün" yazar. Önemli bir güne 3 gün kala sana hatırlatma gelir.</p>
+
+        <button class="link-danger" id="btn-unpair">Bağlantıyı kaldır</button>
+      </div>
+    </section>
+
+    <section class="view" id="view-me" data-title="Benim" hidden>
+      <header class="love-head">
+        <p class="love-name" id="me-name"></p>
+        <p class="love-status">Saha sabahları ve gece 23:00'te sana özet getirir 🌸</p>
+      </header>
+      <h2 class="group">Özetlerin</h2>
+      <div class="block">
+        <label class="row"><span>Sabah özeti saati</span><input type="time" id="me-time" required></label>
+        <label class="row"><span>23:00 gece özeti</span><input type="checkbox" class="switch" id="me-evening"></label>
+      </div>
+      <h2 class="group">Haber konuların</h2>
+      <div class="block"><div class="chips" id="me-topics"></div></div>
+      <p class="foot">Değişiklikler alttaki Kaydet düğmesiyle kaydedilir.</p>
     </section>
 
     <div class="gate" id="gate" hidden>
@@ -205,6 +278,7 @@
     <button data-view="program"><svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="16" rx="3"/><path d="M3.5 9.5h17M8 2.5v4M16 2.5v4"/></svg>Program</button>
     <button data-view="notes"><svg viewBox="0 0 24 24"><path d="M6 3.5h9l4 4v13H6z"/><path d="M14.5 3.5v4.5H19M9 12.5h7M9 16h5"/></svg>Notlar</button>
     <button data-view="school"><svg viewBox="0 0 24 24"><path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.5V16c0 1.5 2.5 3 5.5 3s5.5-1.5 5.5-3v-4.5M21.5 9.5V15"/></svg>Okul</button>
+    <button data-view="love"><svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.2C4.5 7 6.6 5 9 5c1.4 0 2.4.7 3 1.7.6-1 1.6-1.7 3-1.7 2.4 0 4.5 2 4.5 4.8C19.5 15.4 12 20 12 20z"/></svg><span id="tab-love">Sevgilim</span></button>
     <button data-view="settings"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>Ayarlar</button>
   </nav>
 

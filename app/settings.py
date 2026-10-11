@@ -2,12 +2,15 @@ import copy
 import re
 from datetime import date
 
+from app import news
+
 SECTIONS = ["school", "weather", "lessons", "tasks", "finance", "news"]
 DEFAULTS = {
     "briefing_time": "07:00",
     "sections": {s: True for s in SECTIONS},
     "photo_card": True,
     "news_count": 5,
+    "news_topics": ["teknoloji", "gundem"],
     "evening_enabled": True,
     "evening_time": "23:00",
     "weather_alerts": True,
@@ -41,6 +44,12 @@ def _time(value) -> str:
     return f"{int(m.group(1)):02d}:{m.group(2)}"
 
 
+def validate_topics(value) -> list[str]:
+    if not isinstance(value, list) or not value or news.valid_topics(value) != value or len(set(value)) != len(value):
+        raise SettingsError("En az bir haber konusu seçmelisin")
+    return list(value)
+
+
 def validate(payload) -> dict:
     if not isinstance(payload, dict):
         raise SettingsError("Ayarlar bir nesne olmalı")
@@ -59,8 +68,8 @@ def validate(payload) -> dict:
         raise SettingsError("Haber sayısı 1 ile 10 arasında olmalı")
     if not isinstance(payload.get("evening_enabled"), bool):
         raise SettingsError("Akşam özeti açık/kapalı olmalı")
-    if payload["evening_enabled"] and not any(sections[s] for s in ("weather", "lessons", "tasks")):
-        raise SettingsError("Akşam özeti için hava, ders ya da ödev bölümlerinden en az biri açık olmalı")
+    if payload["evening_enabled"] and not any(sections[s] for s in ("weather", "lessons", "tasks", "news")):
+        raise SettingsError("Akşam özeti için hava, ders, ödev ya da haber bölümlerinden en az biri açık olmalı")
     for key in ("weather_alerts", "yks_estimated"):
         if not isinstance(payload.get(key), bool):
             raise SettingsError("Açık/kapalı ayarı hatalı")
@@ -74,8 +83,10 @@ def validate(payload) -> dict:
         if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= top):
             raise SettingsError(f"Hedef net 0 ile {top} arasında olmalı")
         targets[key] = value
+    topics = validate_topics(payload.get("news_topics", DEFAULTS["news_topics"]))
     return {
         **targets,
+        "news_topics": topics,
         "weather_alerts": payload["weather_alerts"],
         "yks_date": yks,
         "yks_estimated": payload["yks_estimated"],

@@ -3,7 +3,10 @@ import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, Update, WebAppInfo
+from telegram import (
+    BotCommand, BotCommandScopeChat, InlineKeyboardButton, InlineKeyboardMarkup, MenuButtonWebApp, ReplyKeyboardMarkup,
+    Update, WebAppInfo,
+)
 from telegram.ext import (
     Application, ApplicationHandlerStop, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler,
     TypeHandler, filters,
@@ -11,7 +14,9 @@ from telegram.ext import (
 
 from telegram.error import Conflict, NetworkError, TimedOut
 
-from app import briefing, calendar_tr, card, chat, intents, reminders, schedule, school, settings, tasks, weather
+from app import (
+    briefing, calendar_tr, card, chat, intents, love, partner, reminders, schedule, school, settings, tasks, weather,
+)
 from app.llm import LLMError
 from app.textutil import split_message
 
@@ -35,7 +40,9 @@ HELP = (
     "📌 \"fizik ödevi cuma teslim\" yaz → ödev/sınav olarak kaydederim\n"
     "/odevler ödev ve sınavlar, /bitti <id> tamamlandı\n"
     "/hatirlaticilar bekleyen hatırlatıcılar\n"
-    "/sil <id> hatırlatıcıyı sil"
+    "/sil <id> hatırlatıcıyı sil\n\n"
+    "💕 /davet sevgilini Saha'ya ekle, /ozledim ona özlediğini ilet\n"
+    "💕 \"İlayda'ya yarın 15'te sınavını hatırlat\" → hatırlatma ona gider"
 )
 PHOTO_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📚 Ders programı", callback_data="pick:program")],
@@ -67,6 +74,8 @@ KEEP_ALIVE_SECONDS = 600
 ALERT_INTERVAL_SECONDS = 7200
 ALERT_FIRST_HOUR = 7
 ALERT_LAST_HOUR = 21
+SPECIAL_DAY_ALERT = time(9, 0)
+PARTNER_NEWS_COUNT = 5
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
@@ -89,8 +98,15 @@ async def send_text(bot, chat_id: int, text: str) -> None:
 
 async def gate(update, context) -> None:
     user = update.effective_user
-    if user is None or user.id != context.bot_data["cfg"].owner_id:
-        raise ApplicationHandlerStop
+    d = context.bot_data
+    if user is not None and user.id == d["cfg"].owner_id:
+        return
+    p = d.get("partner")
+    if user is not None and p and user.id == p["id"]:
+        await partner_update(update, context)
+    elif user is not None:
+        await claim_invite(update, context)
+    raise ApplicationHandlerStop
 
 
 COMMANDS = [
@@ -103,7 +119,10 @@ COMMANDS = [
     BotCommand("yks", "YKS geri sayım ve deneme netleri"),
     BotCommand("ortalama", "Ders notları ve ortalama"),
     BotCommand("devamsizlik", "Devamsızlık durumu"),
+    BotCommand("davet", "Sevgilini Saha'ya ekle"),
+    BotCommand("ozledim", "Sevgiline özlediğini ilet"),
 ]
+PARTNER_COMMANDS = [BotCommand("panel", "Paneli aç")]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -122,10 +141,21 @@ async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def setup_menu(app: Application) -> None:
     cfg = app.bot_data["cfg"]
     await app.bot.set_my_commands(COMMANDS)
+    await app.bot.set_my_commands(COMMANDS, scope=BotCommandScopeChat(cfg.owner_id))
     if cfg.public_url:
         await app.bot.set_chat_menu_button(
             chat_id=cfg.owner_id, menu_button=MenuButtonWebApp(text="Panel", web_app=WebAppInfo(url=f"{cfg.public_url}/"))
         )
+    await setup_partner_menu(app.bot, app.bot_data)
+
+
+async def setup_partner_menu(bot, d) -> None:
+    p, url = d.get("partner"), d["cfg"].public_url
+    if not p:
+        return
+    await bot.set_my_commands(PARTNER_COMMANDS, scope=BotCommandScopeChat(p["id"]))
+    if url:
+        await bot.set_chat_menu_button(chat_id=p["id"], menu_button=MenuButtonWebApp(text="Panel", web_app=WebAppInfo(url=f"{url}/")))
 
 
 async def load_settings(bot_data) -> dict:
@@ -151,13 +181,41 @@ async def send_evening(context) -> None:
     await send_briefing(context, _now(context).date() + timedelta(days=1), evening=True)
 
 
+async def love_lines(bot_data, today: date) -> list[str]:
+    try:
+        return love.lines(await bot_data["db"].list_special_days(), today)
+    except Exception:
+        log.exception("Özel günler alınamadı")
+        return []
+
+
 async def build_briefing(bot_data, today, evening: bool = False) -> tuple[briefing.Briefing, dict]:
     s = await load_settings(bot_data)
     now = datetime.now(bot_data["cfg"].tz)
     ref_day = now.date()
     from_hour = now.hour if today == ref_day else 0
     src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s, ref_day)
-    return await briefing.build(today, src, s, evening=evening, from_hour=from_hour), s
+    top = [] if evening else await love_lines(bot_data, today)
+    return await briefing.build(today, src, s, evening=evening, from_hour=from_hour, top_lines=top), s
+
+
+def partner_briefing_settings(p: dict) -> dict:
+    return {
+        "sections": {"weather": True, "lessons": True, "news": True},
+        "news_count": PARTNER_NEWS_COUNT,
+        "news_topics": p["news_topics"],
+        "photo_card": True,
+    }
+
+
+async def build_partner_briefing(bot_data, p: dict, today: date, evening: bool = False) -> tuple[briefing.Briefing, dict]:
+    cfg = bot_data["cfg"]
+    s = partner_briefing_settings(p)
+    now = datetime.now(cfg.tz)
+    from_hour = now.hour if today == now.date() else 0
+    src = briefing.make_sources(cfg, bot_data["db"], bot_data["llm"], bot_data["http"], today, s, now.date(), school_only=True)
+    top = [] if evening else await love_lines(bot_data, today)
+    return await briefing.build(today, src, s, evening=evening, from_hour=from_hour, name=p["name"], top_lines=top), s
 
 
 def photo_caption(info: briefing.WeatherInfo) -> str:
@@ -169,24 +227,57 @@ def next_briefing_day(now: datetime, briefing_time: str) -> date:
     return now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
 
 
-async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None, evening: bool = False) -> None:
-    d = _deps(context)
-    owner = d["cfg"].owner_id
-    today = day or _now(context).date()
-    result, s = await build_briefing(d, today, evening=evening)
+async def deliver_briefing(bot, chat_id: int, result: briefing.Briefing, s: dict, today: date, suffix: str = "") -> None:
     if s["photo_card"] and result.weather:
         try:
             png = card.render_card(result.weather.w, result.weather.hints, today)
-            await context.bot.send_photo(owner, png, caption=photo_caption(result.weather))
+            await bot.send_photo(chat_id, png, caption=photo_caption(result.weather))
         except TimedOut:
             log.warning("Hava kartı zaman aşımına uğradı, büyük ihtimalle ulaştı; hava tekrar gönderilmiyor")
         except Exception:
             log.exception("Hava kartı gönderilemedi, metne dönülüyor")
-            await send_text(context.bot, owner, result.text)
+            await send_text(bot, chat_id, result.text + suffix)
             return
-        await send_text(context.bot, owner, result.text_without_weather)
+        await send_text(bot, chat_id, result.text_without_weather + suffix)
         return
-    await send_text(context.bot, owner, result.text)
+    await send_text(bot, chat_id, result.text + suffix)
+
+
+async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None, evening: bool = False) -> None:
+    d = _deps(context)
+    today = day or _now(context).date()
+    result, s = await build_briefing(d, today, evening=evening)
+    await deliver_briefing(context.bot, d["cfg"].owner_id, result, s, today)
+
+
+async def send_partner_briefing(context, day: date | None = None, evening: bool = False) -> None:
+    d = _deps(context)
+    p = d.get("partner")
+    if not p:
+        return
+    today = day or _now(context).date()
+    result, s = await build_partner_briefing(d, p, today, evening=evening)
+    note = None
+    if not evening:
+        pending = await d["db"].pending_love_notes()
+        note = pending[0] if pending else None
+    suffix = f"\n\n💌 Kayra'dan not:\n{note['text']}" if note else ""
+    try:
+        await deliver_briefing(context.bot, p["id"], result, s, today, suffix)
+    except Exception as e:
+        log.warning("Partner özeti gönderilemedi: %r", e)
+        await context.bot.send_message(d["cfg"].owner_id, unreachable(p))
+        return
+    if note:
+        await d["db"].mark_love_note_delivered(note["id"])
+
+
+async def send_partner_morning(context) -> None:
+    await send_partner_briefing(context)
+
+
+async def send_partner_evening(context) -> None:
+    await send_partner_briefing(context, _now(context).date() + timedelta(days=1), evening=True)
 
 
 async def weather_alert_job(context) -> None:
@@ -230,6 +321,171 @@ async def keep_alive(context) -> None:
 def schedule_keep_alive(job_queue, public_url: str | None) -> None:
     if public_url:
         job_queue.run_repeating(keep_alive, interval=KEEP_ALIVE_SECONDS, first=60, name="uyanik-tut")
+
+
+def unreachable(p: dict) -> str:
+    return f"⚠️ {p['name']} kişisine ulaşılamadı, botu engellemiş ya da durdurmuş olabilir."
+
+
+def partner_keyboard(kus: bool) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(partner.keyboard_rows(kus), resize_keyboard=True, is_persistent=True)
+
+
+async def load_partner(bot_data) -> dict | None:
+    bot_data["partner"] = partner.merge(await bot_data["db"].get_kv("partner"))
+    return bot_data["partner"]
+
+
+def reschedule_partner(job_queue, p: dict | None, tz: ZoneInfo) -> None:
+    for name in ("partner-sabah", "partner-aksam"):
+        for job in job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+    if not p:
+        return
+    hour, minute = map(int, p["briefing_time"].split(":"))
+    job_queue.run_daily(send_partner_morning, time=time(hour, minute, tzinfo=tz), name="partner-sabah", data=p["briefing_time"])
+    if p["evening_enabled"]:
+        hour, minute = map(int, partner.EVENING_TIME.split(":"))
+        job_queue.run_daily(send_partner_evening, time=time(hour, minute, tzinfo=tz), name="partner-aksam")
+
+
+async def save_partner(bot_data, job_queue, p: dict) -> None:
+    await bot_data["db"].set_kv("partner", p)
+    bot_data["partner"] = p
+    reschedule_partner(job_queue, p, bot_data["cfg"].tz)
+
+
+async def remove_partner(bot_data, job_queue) -> None:
+    for key in ("partner", "kus", "invite"):
+        await bot_data["db"].delete_kv(key)
+    bot_data["partner"] = None
+    reschedule_partner(job_queue, None, bot_data["cfg"].tz)
+    stop_kus(job_queue)
+
+
+async def notify_partner(bot, d, text: str) -> bool:
+    p = d.get("partner")
+    if not p:
+        return False
+    try:
+        await bot.send_message(p["id"], text)
+    except Exception as e:
+        log.warning("Partnere mesaj gönderilemedi: %r", e)
+        await bot.send_message(d["cfg"].owner_id, unreachable(p))
+        return False
+    return True
+
+
+def schedule_kus(job_queue) -> None:
+    stop_kus(job_queue)
+    job_queue.run_repeating(kus_reminder, interval=partner.KUS_INTERVAL_SECONDS, first=partner.KUS_INTERVAL_SECONDS, name="kus-hatirlat")
+
+
+def stop_kus(job_queue) -> None:
+    for job in job_queue.get_jobs_by_name("kus-hatirlat"):
+        job.schedule_removal()
+
+
+async def kus_reminder(context) -> None:
+    d = _deps(context)
+    state, p = await d["db"].get_kv("kus"), d.get("partner")
+    if not state or not p:
+        stop_kus(context.job_queue)
+        return
+    now = _now(context)
+    if partner.is_quiet(now):
+        return
+    since = partner.duration(datetime.fromisoformat(state["since"]), now)
+    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {p['name']} hâlâ küs ({since}). Gönlünü aldın mı? 🌹")
+
+
+async def restore_kus(app: Application) -> None:
+    if app.bot_data.get("partner") and await app.bot_data["db"].get_kv("kus"):
+        schedule_kus(app.job_queue)
+
+
+async def special_day_job(context) -> None:
+    d = _deps(context)
+    for line in love.owner_alerts(await d["db"].list_special_days(), _now(context).date()):
+        await context.bot.send_message(d["cfg"].owner_id, line)
+
+
+def schedule_special_days(job_queue, tz: ZoneInfo) -> None:
+    job_queue.run_daily(special_day_job, time=SPECIAL_DAY_ALERT.replace(tzinfo=tz), name="ozel-gun")
+
+
+async def claim_invite(update, context) -> bool:
+    msg, user = getattr(update, "message", None), update.effective_user
+    if msg is None or not msg.text or not msg.text.startswith("/start "):
+        return False
+    d = _deps(context)
+    code = msg.text.split(maxsplit=1)[1].strip()
+    if not partner.invite_valid(await d["db"].get_kv("invite"), code, _now(context)):
+        return False
+    p = partner.new_partner(user.id, user.first_name)
+    await d["db"].delete_kv("invite")
+    await d["db"].delete_kv("kus")
+    stop_kus(context.job_queue)
+    await save_partner(d, context.job_queue, p)
+    try:
+        await setup_partner_menu(context.bot, d)
+    except Exception:
+        log.exception("Partner menüsü kurulamadı")
+    await msg.reply_text(partner.welcome(p["name"]), reply_markup=partner_keyboard(False))
+    await context.bot.send_message(d["cfg"].owner_id, f"💕 {p['name']} Saha'ya katıldı! Ayarlarını panelde 💕 sekmesinden yönetebilirsin.")
+    return True
+
+
+async def partner_update(update, context) -> None:
+    if update.callback_query:
+        await update.callback_query.answer()
+        return
+    msg = update.message
+    if msg is None or not msg.text:
+        return
+    d = _deps(context)
+    p, owner, now, text = d["partner"], d["cfg"].owner_id, _now(context), msg.text.strip()
+    state = await d["db"].get_kv("kus")
+    if text == partner.KUS:
+        if state:
+            await msg.reply_text(f"Zaten küssün 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+            return
+        await d["db"].set_kv("kus", {"since": now.isoformat()})
+        schedule_kus(context.job_queue)
+        await context.bot.send_message(owner, f"🚨 {p['name']} sana küstü! Hemen gönlünü al 🌹")
+        await msg.reply_text(f"Tamam, Kayra'ya haber verdim 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+    elif text == partner.BARIS:
+        if not state:
+            await msg.reply_text("Zaten küs değilsin 🙂", reply_markup=partner_keyboard(False))
+            return
+        await d["db"].delete_kv("kus")
+        stop_kus(context.job_queue)
+        since = partner.duration(datetime.fromisoformat(state["since"]), now)
+        await context.bot.send_message(owner, f"🕊 {p['name']} ile barıştınız! {since} küs kaldı.")
+        await msg.reply_text("🕊 Barıştınız! Kayra'ya haber verdim 💕", reply_markup=partner_keyboard(False))
+    elif text == partner.OZLEDIM:
+        await context.bot.send_message(owner, f"🥺 {p['name']} seni özledi!")
+        await msg.reply_text("🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
+    elif text.startswith("/panel"):
+        await panel(update, context)
+    else:
+        await msg.reply_text(partner.welcome(p["name"]), reply_markup=partner_keyboard(bool(state)))
+
+
+async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    invite = partner.new_invite(_now(context))
+    await _deps(context)["db"].set_kv("invite", invite)
+    link = f"https://t.me/{context.bot.username}?start={invite['code']}"
+    await update.message.reply_text(f"💌 Bu linki sevgiline gönder (24 saat geçerli, tek kullanımlık):\n{link}")
+
+
+async def ozledim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    d = _deps(context)
+    if not d.get("partner"):
+        await update.message.reply_text("Önce /davet ile sevgilini Saha'ya ekle.")
+        return
+    if await notify_partner(context.bot, d, "🥺 Kayra seni özledi!"):
+        await update.message.reply_text("🥺 İlettim.")
 
 
 def is_reminder_request(text: str) -> bool:
@@ -392,26 +648,38 @@ async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"📝 Kaydedildi: {text}")
 
 
+async def send_reminder(bot, d, text: str, target: str = "owner", late: bool = False) -> None:
+    prefix = "⏰ (gecikmeli) " if late else "⏰ "
+    p, owner = d.get("partner"), d["cfg"].owner_id
+    if target != "partner":
+        await bot.send_message(owner, prefix + text)
+    elif not p:
+        await bot.send_message(owner, f"{prefix}{text} (sevgilin kayıtlı olmadığı için sana geldi)")
+    elif await notify_partner(bot, d, f"{prefix}Kayra hatırlatıyor: {text}"):
+        await bot.send_message(owner, f"✅ {p['name']} kişisine hatırlattım: {text}")
+
+
 async def _fire_reminder(context: ContextTypes.DEFAULT_TYPE) -> None:
-    reminder_id, text = context.job.data
+    reminder_id, text, *rest = context.job.data
     d = _deps(context)
-    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {text}")
+    await send_reminder(context.bot, d, text, rest[0] if rest else "owner")
     await d["db"].mark_sent(reminder_id)
 
 
-def schedule_reminder(job_queue, reminder_id: int, when: datetime, text: str) -> None:
-    job_queue.run_once(_fire_reminder, when=when, data=(reminder_id, text), name=f"rem-{reminder_id}")
+def schedule_reminder(job_queue, reminder_id: int, when: datetime, text: str, target: str = "owner") -> None:
+    job_queue.run_once(_fire_reminder, when=when, data=(reminder_id, text, target), name=f"rem-{reminder_id}")
 
 
 async def restore_reminders(app: Application) -> None:
     d = app.bot_data
     now = datetime.now(d["cfg"].tz)
     for r in await d["db"].pending_reminders():
+        target = r.get("target", "owner")
         if r["due_at"] <= now:
-            await app.bot.send_message(d["cfg"].owner_id, f"⏰ (gecikmeli) {r['text']}")
+            await send_reminder(app.bot, d, r["text"], target, late=True)
             await d["db"].mark_sent(r["id"])
         else:
-            schedule_reminder(app.job_queue, r["id"], r["due_at"], r["text"])
+            schedule_reminder(app.job_queue, r["id"], r["due_at"], r["text"], target)
 
 
 async def _create_reminder(update: Update, context, message: str) -> None:
@@ -425,9 +693,12 @@ async def _create_reminder(update: Update, context, message: str) -> None:
         log.exception("Hatırlatıcı LLM ile ayrıştırılamadı")
         await update.message.reply_text(LLM_DOWN)
         return
-    reminder_id = await d["db"].add_reminder(text, when)
-    schedule_reminder(context.job_queue, reminder_id, when, text)
-    await update.message.reply_text(f"⏰ Tamam! {reminders.format_when(when)} — {text} (#{reminder_id})")
+    p = d.get("partner")
+    target = "partner" if p and partner.targets_partner(message, p["name"]) else "owner"
+    reminder_id = await d["db"].add_reminder(text, when, target)
+    schedule_reminder(context.job_queue, reminder_id, when, text, target)
+    who = f" → {p['name']} kişisine hatırlatacağım 💕" if target == "partner" else ""
+    await update.message.reply_text(f"⏰ Tamam! {reminders.format_when(when)} — {text} (#{reminder_id}){who}")
 
 
 async def hatirlat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -443,7 +714,12 @@ async def hatirlaticilar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not pending:
         await update.message.reply_text("Bekleyen hatırlatıcı yok.")
         return
-    lines = [f"#{r['id']} {reminders.format_when(r['due_at'].astimezone(d['cfg'].tz))} — {r['text']}" for r in pending]
+    p = d.get("partner")
+    lines = [
+        f"#{r['id']} {reminders.format_when(r['due_at'].astimezone(d['cfg'].tz))} — {r['text']}"
+        + (f" (→ {p['name'] if p else 'sevgilin'})" if r.get("target") == "partner" else "")
+        for r in pending
+    ]
     await send_text(context.bot, update.effective_chat.id, "\n".join(lines))
 
 
@@ -626,6 +902,8 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("yks", yks))
     app.add_handler(CommandHandler("ortalama", ortalama))
     app.add_handler(CommandHandler("devamsizlik", devamsizlik))
+    app.add_handler(CommandHandler("davet", davet))
+    app.add_handler(CommandHandler("ozledim", ozledim))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.VOICE, voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))

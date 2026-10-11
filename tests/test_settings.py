@@ -61,7 +61,7 @@ def test_evening_time_normalized():
 
 
 def test_evening_needs_an_evening_section():
-    only_market = {**DEFAULTS["sections"], "weather": False, "lessons": False, "tasks": False}
+    only_market = {**DEFAULTS["sections"], "weather": False, "lessons": False, "tasks": False, "news": False}
     with pytest.raises(SettingsError, match="Akşam"):
         validate({**DEFAULTS, "sections": only_market})
     assert validate({**DEFAULTS, "sections": only_market, "evening_enabled": False})["evening_enabled"] is False

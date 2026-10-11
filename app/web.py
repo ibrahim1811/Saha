@@ -11,7 +11,7 @@ from dataclasses import asdict
 
 from datetime import date
 
-from app import bot, calendar_tr, card, reminders, schedule, school, settings, tasks, weather
+from app import bot, calendar_tr, card, love, news, partner, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
@@ -22,6 +22,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
 TG_APP = web.AppKey("tg", object)
+PARTNER_PATHS = {"/api/me", "/api/partner/self"}
 
 
 class ApiError(Exception):
@@ -69,7 +70,14 @@ async def auth(request: web.Request, handler):
             user = verify_init_data(header[4:], cfg.telegram_token)
         except AuthError as e:
             raise ApiError(401, str(e)) from e
-        if int(user["id"]) != cfg.owner_id:
+        p = request.app[TG_APP].bot_data.get("partner")
+        if int(user["id"]) == cfg.owner_id:
+            request["role"] = "owner"
+        elif p and int(user["id"]) == p["id"]:
+            if request.path not in PARTNER_PATHS:
+                raise ApiError(403, "Bu bölüm sana kapalı")
+            request["role"] = "partner"
+        else:
             raise ApiError(403, "Bu panel sana ait değil")
     return await handler(request)
 
@@ -326,6 +334,79 @@ async def send_now(request):
     return _json({"ok": True})
 
 
+def _partner_or_404(d) -> dict:
+    p = d.get("partner")
+    if not p:
+        raise ApiError(404, "Henüz sevgilin eklenmedi")
+    return p
+
+
+async def me(request):
+    d = _data(request)
+    p = d.get("partner")
+    name = p["name"] if request["role"] == "partner" else "Kayra"
+    return _json({"role": request["role"], "name": name, "topics": news.CATALOG})
+
+
+async def get_partner_self(request):
+    p = _partner_or_404(_data(request))
+    return _json({k: p[k] for k in partner.SELF_KEYS})
+
+
+async def put_partner_self(request):
+    d = _data(request)
+    p = _partner_or_404(d)
+    value = {**p, **partner.validate_self(await _body(request))}
+    await bot.save_partner(d, _tg(request).job_queue, value)
+    return _json({k: value[k] for k in partner.SELF_KEYS})
+
+
+async def get_partner(request):
+    d = _data(request)
+    db = d["db"]
+    kus, days, now = await db.get_kv("kus"), await db.list_special_days(), _now(d["cfg"].tz)
+    return _json({
+        "partner": d.get("partner"),
+        "kus": kus,
+        "kus_for": partner.duration(datetime.fromisoformat(kus["since"]), now) if kus else None,
+        "notes": await db.pending_love_notes(),
+        "days": days,
+        "lines": love.lines(days, now.date()),
+    })
+
+
+async def put_partner(request):
+    d = _data(request)
+    p = _partner_or_404(d)
+    value = {**p, **partner.validate_owner(await _body(request))}
+    await bot.save_partner(d, _tg(request).job_queue, value)
+    return _json(value)
+
+
+async def delete_partner(request):
+    await bot.remove_partner(_data(request), _tg(request).job_queue)
+    return _json({"ok": True})
+
+
+async def post_invite(request):
+    d = _data(request)
+    invite = partner.new_invite(_now(d["cfg"].tz))
+    await d["db"].set_kv("invite", invite)
+    return _json({"link": f"https://t.me/{_tg(request).bot.username}?start={invite['code']}", "expires": invite["expires"]})
+
+
+async def post_love_note(request):
+    text = love.validate_note(await _body(request))
+    nid = await _data(request)["db"].add_love_note(text)
+    return _json({"id": nid, "text": text})
+
+
+async def post_special_day(request):
+    row = love.validate_day(await _body(request))
+    did = await _data(request)["db"].add_special_day(row["name"], row["day"], row["yearly"], row["counter"])
+    return _json({"id": did, **row})
+
+
 async def _no_cache_static(request, response):
     if request.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache"
@@ -366,6 +447,17 @@ def build_web_app(tg_app) -> web.Application:
         web.delete("/api/absences/{id}", _deleter("delete_absence", "Devamsızlık")),
         web.get("/api/briefing/preview", preview),
         web.post("/api/briefing/send", send_now),
+        web.get("/api/me", me),
+        web.get("/api/partner/self", get_partner_self),
+        web.put("/api/partner/self", put_partner_self),
+        web.get("/api/partner", get_partner),
+        web.put("/api/partner", put_partner),
+        web.delete("/api/partner", delete_partner),
+        web.post("/api/partner/invite", post_invite),
+        web.post("/api/love-notes", post_love_note),
+        web.delete("/api/love-notes/{id}", _deleter("delete_love_note", "Not")),
+        web.post("/api/special-days", post_special_day),
+        web.delete("/api/special-days/{id}", _deleter("delete_special_day", "Özel gün")),
     ])
     return app
 
