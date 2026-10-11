@@ -133,6 +133,21 @@ async def test_partner_only_reaches_own_endpoints(client):
     assert names == ["partner-sabah"]
 
 
+async def test_love_actions_from_panel(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    client.tg.bot.send_animation = AsyncMock()
+    s = await (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth(99))).json()
+    assert s["kus"] is True and "kus" in client.tg.bot_data["db"].kv
+    assert client.tg.bot.send_animation.await_args_list[0].args[0] == 42
+    assert (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth(99))).status == 400
+    assert (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())).status == 400
+    s = await (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth())).json()
+    assert client.tg.bot.send_animation.await_args.args[0] == 99
+    s = await (await client.post("/api/love/action", json={"action": "baris"}, headers=_auth(99))).json()
+    assert s["kus"] is False
+    assert (await (await client.get("/api/love/state", headers=_auth(99))).json())["kus"] is False
+
+
 async def test_owner_partner_panel(client):
     assert (await client.get("/api/partner/self", headers=_auth())).status == 404
     client.tg.bot.username = "SahaBot"

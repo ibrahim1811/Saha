@@ -278,6 +278,7 @@
     $("love-name").textContent = "💕 " + data.partner.name;
     $("love-head").dataset.kus = !!data.kus;
     $("love-status").textContent = data.kus ? `😤 Boykot sürüyor, ${data.kus_for} oldu` : "Barışıksınız 🕊";
+    $("love-main").querySelector('[data-act="gonul"]').hidden = !data.kus;
     $("love-lines-block").hidden = !data.lines.length;
     $("love-lines").textContent = data.lines.join("\n");
     const st = data.stats;
@@ -333,7 +334,41 @@
     setMainButton("Kaydet", dirty ? saveMe : null);
   }
 
+  function renderMeState(s) {
+    const box = $("view-me");
+    box.querySelector('[data-act="kus"]').hidden = s.kus;
+    box.querySelector('[data-act="baris"]').hidden = !s.kus;
+    box.querySelector(".love-head").dataset.kus = s.kus;
+    $("me-status").textContent = s.kus ? `😤 Boykot sürüyor, ${s.kus_for} oldu` : "Saha sabahları ve gece 23:00'te sana özet getirir 🌸";
+  }
+
+  const ACTION_TOAST = {
+    kus: "😤 Boykot başladı, Kayra'ya alarm gitti",
+    baris: "🕊 Barıştınız!",
+    ozledim: "🥺 İletildi",
+    moral: "💕 Haber verildi",
+    gonul: "🌹 Özür gitti, şimdi sıra onda 🤞",
+  };
+
+  async function loveAction(btn) {
+    const act = btn.dataset.act;
+    const buttons = btn.parentElement.querySelectorAll("button");
+    buttons.forEach((b) => (b.disabled = true));
+    try {
+      const s = await api("POST", "/api/love/action", { action: act });
+      haptic("success");
+      toast(ACTION_TOAST[act]);
+      if (state.role === "partner") renderMeState(s);
+      else await loadLove();
+    } catch (err) {
+      fail(err);
+    } finally {
+      buttons.forEach((b) => (b.disabled = false));
+    }
+  }
+
   async function loadMe() {
+    api("GET", "/api/love/state").then(renderMeState).catch(fail);
     state.meSaved = await api("GET", "/api/partner/self");
     state.meDraft = structuredClone(state.meSaved);
     renderMe();
@@ -714,6 +749,12 @@
       renderMe();
     });
     $("btn-invite").addEventListener("click", () => createInvite().catch(fail));
+    document.querySelectorAll("[data-actions]").forEach((box) =>
+      box.addEventListener("click", (e) => {
+        const b = e.target.closest("[data-act]");
+        if (b) loveAction(b);
+      })
+    );
     $("lnote-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const input = $("lnote-input");

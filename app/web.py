@@ -22,7 +22,9 @@ STATIC = Path(__file__).resolve().parent / "static"
 DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
 TG_APP = web.AppKey("tg", object)
-PARTNER_PATHS = {"/api/me", "/api/partner/self"}
+PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action"}
+PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "moral": partner.MORAL}
+OWNER_ACTIONS = {"gonul", "ozledim", "moral"}
 
 
 class ApiError(Exception):
@@ -396,6 +398,32 @@ async def post_invite(request):
     return _json({"link": f"https://t.me/{_tg(request).bot.username}?start={invite['code']}", "expires": invite["expires"]})
 
 
+async def _love_state(d) -> dict:
+    kus = await d["db"].get_kv("kus")
+    since = partner.duration(datetime.fromisoformat(kus["since"]), _now(d["cfg"].tz)) if kus else None
+    return {"kus": bool(kus), "kus_for": since}
+
+
+async def get_love_state(request):
+    d = _data(request)
+    _partner_or_404(d)
+    return _json(await _love_state(d))
+
+
+async def post_love_action(request):
+    tg, d = _tg(request), _data(request)
+    _partner_or_404(d)
+    action = str((await _body(request)).get("action", ""))
+    ctx = SimpleNamespace(bot=tg.bot, bot_data=tg.bot_data, job_queue=tg.job_queue)
+    if request["role"] == "partner" and action in PARTNER_ACTIONS:
+        await bot.partner_action(ctx, d, PARTNER_ACTIONS[action])
+    elif request["role"] == "owner" and action in OWNER_ACTIONS:
+        await bot.owner_love_action(ctx, action)
+    else:
+        raise ApiError(400, "Bilinmeyen işlem")
+    return _json(await _love_state(d))
+
+
 async def post_love_note(request):
     text = love.validate_note(await _body(request))
     nid = await _data(request)["db"].add_love_note(text)
@@ -455,6 +483,8 @@ def build_web_app(tg_app) -> web.Application:
         web.put("/api/partner", put_partner),
         web.delete("/api/partner", delete_partner),
         web.post("/api/partner/invite", post_invite),
+        web.get("/api/love/state", get_love_state),
+        web.post("/api/love/action", post_love_action),
         web.post("/api/love-notes", post_love_note),
         web.delete("/api/love-notes/{id}", _deleter("delete_love_note", "Not")),
         web.post("/api/special-days", post_special_day),

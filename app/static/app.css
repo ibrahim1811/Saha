@@ -222,6 +222,21 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
 .love-status { margin: 4px 0 0; opacity: .9; }
 .love-lines { white-space: pre-wrap; margin: 0; padding: 12px 0; }
 .row input.txt { border: 0; background: none; text-align: right; font-weight: 600; font-size: 16px; color: var(--accent); min-width: 0; width: 160px; }
+.love-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.love-btn {
+  appearance: none; border: 0; border-radius: var(--radius); background: var(--surface); cursor: pointer;
+  display: grid; justify-items: center; gap: 4px; padding: 16px 8px; font-weight: 600; font-size: 15px;
+  transition: transform .12s ease, opacity .12s ease;
+}
+.love-btn[hidden] { display: none; }
+.love-actions + .block { margin-top: 10px; }
+.love-btn i { font-style: normal; font-size: 32px; line-height: 1; }
+.love-btn:active { transform: scale(.96); }
+.love-btn:disabled { opacity: .5; }
+.love-btn.hot { background: linear-gradient(160deg, #e2557f, #f6a07a); color: #fff; }
+.love-btn.calm { background: linear-gradient(160deg, #4f9be8, #7fd0c4); color: #fff; }
+.love-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.love-btn.hot, .love-btn.calm { grid-column: 1 / -1; grid-auto-flow: column; justify-content: center; align-items: center; gap: 10px; font-size: 17px; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 16px; text-align: center; }
 .stats strong { display: block; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .stats span { color: var(--hint); font-size: 13px; }

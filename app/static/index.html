@@ -217,6 +217,11 @@
           <p class="love-name" id="love-name"></p>
           <p class="love-status" id="love-status"></p>
         </header>
+        <div class="love-actions" data-actions>
+          <button type="button" class="love-btn hot" data-act="gonul" hidden><i>🌹</i>Gönlünü al</button>
+          <button type="button" class="love-btn" data-act="ozledim"><i>🥺</i>Özledim</button>
+          <button type="button" class="love-btn" data-act="moral"><i>💌</i>Moral ver</button>
+        </div>
         <div class="block" id="love-lines-block" hidden><p class="love-lines" id="love-lines"></p></div>
 
         <h2 class="group">Boykot istatistikleri</h2>
@@ -258,8 +263,14 @@
     <section class="view" id="view-me" data-title="Benim" hidden>
       <header class="love-head">
         <p class="love-name" id="me-name"></p>
-        <p class="love-status">Saha sabahları ve gece 23:00'te sana özet getirir 🌸</p>
+        <p class="love-status" id="me-status">Saha sabahları ve gece 23:00'te sana özet getirir 🌸</p>
       </header>
+      <div class="love-actions" data-actions>
+        <button type="button" class="love-btn hot" data-act="kus"><i>😤</i>Boykot başlasın</button>
+        <button type="button" class="love-btn calm" data-act="baris" hidden><i>🕊</i>Barıştık</button>
+        <button type="button" class="love-btn" data-act="ozledim"><i>🥺</i>Özledim</button>
+        <button type="button" class="love-btn" data-act="moral"><i>😔</i>Moralim bozuk</button>
+      </div>
       <h2 class="group">Özetlerin</h2>
       <div class="block">
         <label class="row"><span>Sabah özeti saati</span><input type="time" id="me-time" required></label>
