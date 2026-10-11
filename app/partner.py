@@ -14,7 +14,9 @@ KUS = "😤 Boykot başlasın"
 KUS_ALIASES = {KUS, "😤 Küstüm"}
 BARIS = "🕊 Barıştık"
 OZLEDIM = "🥺 Özledim"
+MORAL = "😔 Moralim bozuk"
 YARDIM = "❓ Nasıl kullanılır"
+KUS_LOG_MAX = 200
 
 DEFAULTS = {"briefing_time": "07:00", "evening_enabled": True, "news_topics": ["gundem", "yasam"]}
 SELF_KEYS = set(DEFAULTS)
@@ -84,7 +86,39 @@ def targets_partner(message: str, name: str | None) -> bool:
 
 
 def keyboard_rows(kus: bool) -> list[list[str]]:
-    return [[BARIS if kus else KUS, OZLEDIM], [YARDIM]]
+    return [[BARIS if kus else KUS, OZLEDIM], [MORAL, YARDIM]]
+
+
+def log_kus(log: list | None, since: datetime, until: datetime) -> list:
+    return ([*(log or []), {"since": since.isoformat(), "until": until.isoformat()}])[-KUS_LOG_MAX:]
+
+
+def stats(log: list | None, now: datetime) -> dict:
+    rows = [(datetime.fromisoformat(r["since"]), datetime.fromisoformat(r["until"])) for r in log or []]
+    month = [(s, u) for s, u in rows if (s.year, s.month) == (now.year, now.month)]
+    minutes = [max(int((u - s).total_seconds() // 60), 1) for s, u in rows]
+    longest = max(rows, key=lambda r: r[1] - r[0], default=None)
+    return {
+        "total": len(rows),
+        "this_month": len(month),
+        "avg": duration(now - timedelta(minutes=sum(minutes) // len(minutes)), now) if minutes else None,
+        "longest": duration(*longest) if longest else None,
+        "longest_day": longest[0].date().isoformat() if longest else None,
+        "last": duration(*rows[-1]) if rows else None,
+    }
+
+
+def stats_text(s: dict) -> str:
+    if not s["total"]:
+        return "📊 Henüz hiç boykot olmadı 🕊"
+    return (
+        "📊 Boykot istatistikleri\n"
+        f"• Bu ay: {s['this_month']} kez\n"
+        f"• Toplam: {s['total']} kez\n"
+        f"• Ortalama süre: {s['avg']}\n"
+        f"• En uzunu: {s['longest']} ({s['longest_day']})\n"
+        f"• Sonuncusu: {s['last']}"
+    )
 
 
 def welcome(name: str) -> str:
@@ -107,7 +141,8 @@ def guide(name: str, briefing_time: str) -> str:
         "⬇️ Alttaki butonlar:\n"
         f"• {KUS} — Kayra'ya anında 🚨 alarm gider; barışana kadar saatte bir hatırlatılır 😤\n"
         f"• {BARIS} — boykot biter, Kayra'ya ne kadar sürdüğü bildirilir\n"
-        f"• {OZLEDIM} — Kayra'ya özlediğini iletirim\n\n"
+        f"• {OZLEDIM} — Kayra'ya özlediğini iletirim\n"
+        f"• {MORAL} — Kayra'ya haber veririm, sana da moral gelir\n\n"
         "⚙️ Panel (sol alttaki Panel düğmesi):\n"
         "• Hangi konularda haber geleceğini seç (gündem, yaşam, spor, sağlık…)\n"
         "• Sabah özeti saatini değiştir\n"

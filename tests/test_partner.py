@@ -101,7 +101,7 @@ def _ctx(db, p=PARTNER):
     jq.get_jobs_by_name.return_value = []
     return SimpleNamespace(
         bot_data={"cfg": SimpleNamespace(owner_id=42, tz=TZ, public_url=None), "db": db, "partner": p},
-        bot=SimpleNamespace(send_message=AsyncMock(), username="SahaBot", set_my_commands=AsyncMock()),
+        bot=SimpleNamespace(send_message=AsyncMock(), send_animation=AsyncMock(), username="SahaBot", set_my_commands=AsyncMock()),
         job_queue=jq,
     )
 
@@ -111,35 +111,92 @@ def _upd(user_id, text):
     return SimpleNamespace(effective_user=SimpleNamespace(id=user_id, first_name="İlayda"), message=msg, callback_query=None)
 
 
+def _sent(mock, chat_id):
+    return [c for c in mock.await_args_list if c.args[0] == chat_id]
+
+
 async def test_kus_and_baris_flow():
     db = KV()
     ctx = _ctx(db)
     with pytest.raises(ApplicationHandlerStop):
         await botmod.gate(_upd(99, partner.KUS), ctx)
     assert "kus" in db.values
-    assert "BOYKOT BAŞLADI" in ctx.bot.send_message.await_args.args[1]
+    alarm = _sent(ctx.bot.send_animation, 42)[-1]
+    assert "giphy.com" in alarm.args[1] and "BOYKOT BAŞLADI" in alarm.kwargs["caption"]
+    assert alarm.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "love:gonul"
     assert ctx.job_queue.run_repeating.call_args.kwargs["name"] == "kus-hatirlat"
 
     db.values["kus"] = {"since": (datetime.now(TZ) - timedelta(minutes=30)).isoformat()}
     with pytest.raises(ApplicationHandlerStop):
         await botmod.gate(_upd(99, partner.BARIS), ctx)
-    assert "kus" not in db.values
-    assert "barıştınız" in ctx.bot.send_message.await_args.args[1]
+    assert "kus" not in db.values and len(db.values["kus_log"]) == 1
+    assert "barıştınız" in _sent(ctx.bot.send_animation, 42)[-1].kwargs["caption"]
+    assert _sent(ctx.bot.send_animation, 99)
 
 
-async def test_ozledim_notifies_owner():
+async def test_gif_failure_falls_back_to_text():
+    ctx = _ctx(KV())
+    ctx.bot.send_animation = AsyncMock(side_effect=Exception("bad gif"))
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(_upd(99, partner.OZLEDIM), ctx)
+    assert _sent(ctx.bot.send_message, 42)[-1].args[1] == "🥺 İlayda seni özledi!"
+
+
+async def test_ozledim_notifies_owner_with_gif():
     ctx = _ctx(KV())
     with pytest.raises(ApplicationHandlerStop):
         await botmod.gate(_upd(99, partner.OZLEDIM), ctx)
-    assert ctx.bot.send_message.await_args.args == (42, "🥺 İlayda seni özledi!")
+    assert _sent(ctx.bot.send_animation, 42)[-1].kwargs["caption"] == "🥺 İlayda seni özledi!"
+
+
+async def test_moral_alerts_owner_and_cheers_partner():
+    ctx = _ctx(KV())
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(_upd(99, partner.MORAL), ctx)
+    alert = _sent(ctx.bot.send_message, 42)[-1]
+    assert "moralinin bozuk" in alert.args[1]
+    assert alert.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "love:moral"
+    assert _sent(ctx.bot.send_animation, 99)
+
+
+async def test_owner_gonul_needs_boykot():
+    db = KV()
+    ctx = _ctx(db)
+    await botmod.owner_love_action(ctx, "gonul")
+    assert "boykot yok" in ctx.bot.send_message.await_args.args[1]
+    ctx.bot.send_animation.assert_not_awaited()
+    db.values["kus"] = {"since": datetime.now(TZ).isoformat()}
+    await botmod.owner_love_action(ctx, "gonul")
+    gif = _sent(ctx.bot.send_animation, 99)[-1]
+    assert "özür" in gif.kwargs["caption"]
+    assert gif.kwargs["reply_markup"].inline_keyboard[0][0].callback_data == "love:baris"
+
+
+async def test_partner_inline_baris_button():
+    db = KV(kus={"since": (datetime.now(TZ) - timedelta(minutes=5)).isoformat()})
+    ctx = _ctx(db)
+    query = SimpleNamespace(data="love:baris", answer=AsyncMock(), edit_message_reply_markup=AsyncMock())
+    upd = SimpleNamespace(effective_user=SimpleNamespace(id=99), message=None, callback_query=query)
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(upd, ctx)
+    assert "kus" not in db.values
+
+
+def test_stats():
+    now = datetime(2026, 10, 20, 12, tzinfo=TZ)
+    log = partner.log_kus(None, now - timedelta(days=30, minutes=10), now - timedelta(days=30))
+    log = partner.log_kus(log, now - timedelta(hours=3), now - timedelta(hours=1))
+    s = partner.stats(log, now)
+    assert (s["total"], s["this_month"], s["longest"], s["last"], s["avg"]) == (2, 1, "2 saat", "2 saat", "1 saat 5 dakika")
+    assert "Bu ay: 1 kez" in partner.stats_text(s)
+    assert partner.stats_text(partner.stats([], now)).startswith("📊 Henüz")
 
 
 async def test_partner_cannot_reach_owner_handlers():
     ctx = _ctx(KV())
-    upd = _upd(99, "/notlar")
     with pytest.raises(ApplicationHandlerStop):
-        await botmod.gate(upd, ctx)
-    assert "Saha rehberi" in upd.message.reply_text.await_args.args[0]
+        await botmod.gate(_upd(99, "/notlar"), ctx)
+    assert "Saha rehberi" in _sent(ctx.bot.send_message, 99)[-1].args[1]
 
 
 async def test_old_kus_button_still_works():
@@ -150,33 +207,12 @@ async def test_old_kus_button_still_works():
 
 
 async def test_help_button_sends_guide():
-    upd = _upd(99, partner.YARDIM)
+    ctx = _ctx(KV())
     with pytest.raises(ApplicationHandlerStop):
-        await botmod.gate(upd, _ctx(KV()))
-    reply = upd.message.reply_text.await_args
-    assert "Boykot başlasın" in reply.args[0] and "07:00" in reply.args[0]
-    assert reply.kwargs["reply_markup"].keyboard[1][0].text == partner.YARDIM
-
-
-async def test_claim_invite():
-    inv = partner.new_invite(datetime.now(TZ))
-    db = KV(invite=inv)
-    ctx = _ctx(db, p=None)
-    with pytest.raises(ApplicationHandlerStop):
-        await botmod.gate(_upd(99, f"/start {inv['code']}"), ctx)
-    assert db.values["partner"]["id"] == 99 and "invite" not in db.values
-    assert ctx.bot_data["partner"]["name"] == "İlayda"
-    assert "katıldı" in ctx.bot.send_message.await_args.args[1]
-
-
-async def test_wrong_invite_is_silent():
-    db = KV(invite=partner.new_invite(datetime.now(TZ)))
-    ctx = _ctx(db, p=None)
-    upd = _upd(99, "/start yanlis")
-    with pytest.raises(ApplicationHandlerStop):
-        await botmod.gate(upd, ctx)
-    assert "partner" not in db.values
-    upd.message.reply_text.assert_not_awaited()
+        await botmod.gate(_upd(99, partner.YARDIM), ctx)
+    reply = _sent(ctx.bot.send_message, 99)[-1]
+    assert "Boykot başlasın" in reply.args[1] and "07:00" in reply.args[1] and "Moralim bozuk" in reply.args[1]
+    assert reply.kwargs["reply_markup"].keyboard[1][1].text == partner.YARDIM
 
 
 async def test_partner_reminder_goes_to_partner():

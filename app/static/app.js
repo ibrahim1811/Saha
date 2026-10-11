@@ -280,6 +280,10 @@
     $("love-status").textContent = data.kus ? `😤 Boykot sürüyor, ${data.kus_for} oldu` : "Barışıksınız 🕊";
     $("love-lines-block").hidden = !data.lines.length;
     $("love-lines").textContent = data.lines.join("\n");
+    const st = data.stats;
+    $("love-stats").innerHTML = st.total
+      ? `<div><strong>${st.this_month}</strong><span>bu ay</span></div><div><strong>${st.total}</strong><span>toplam</span></div><div><strong>${esc(st.avg.split(" ").slice(0, 2).join(" "))}</strong><span>ortalama</span></div><p class="wide">En uzunu ${esc(st.longest)} · sonuncusu ${esc(st.last)}</p>`
+      : '<p class="empty wide">Henüz hiç boykot olmadı 🕊</p>';
     $("lnotes").innerHTML = data.notes.length
       ? data.notes.map((n, i) => `<div class="item"><span class="item-time">${i === 0 ? "Sıradaki" : ""}</span><div class="item-main"><p class="item-title">${esc(n.text)}</p></div><button class="icon-btn" data-lnote="${n.id}" aria-label="Notu sil">${TRASH}</button></div>`).join("")
       : '<p class="empty">Bekleyen not yok.</p>';

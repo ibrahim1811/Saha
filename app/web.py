@@ -372,6 +372,7 @@ async def get_partner(request):
         "notes": await db.pending_love_notes(),
         "days": days,
         "lines": love.lines(days, now.date()),
+        "stats": partner.stats(await db.get_kv("kus_log"), now),
     })
 
 

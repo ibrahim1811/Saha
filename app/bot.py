@@ -15,7 +15,7 @@ from telegram.ext import (
 from telegram.error import Conflict, NetworkError, TimedOut
 
 from app import (
-    briefing, calendar_tr, card, chat, intents, love, partner, reminders, schedule, school, settings, tasks, weather,
+    briefing, calendar_tr, card, chat, gifs, intents, love, partner, reminders, schedule, school, settings, tasks, weather,
 )
 from app.llm import LLMError
 from app.textutil import split_message
@@ -42,6 +42,7 @@ HELP = (
     "/hatirlaticilar bekleyen hatırlatıcılar\n"
     "/sil <id> hatırlatıcıyı sil\n\n"
     "💕 /davet sevgilini Saha'ya ekle, /ozledim ona özlediğini ilet\n"
+    "💕 /gonlunual boykottaysa gönlünü al, /boykot istatistikler\n"
     "💕 \"İlayda'ya yarın 15'te sınavını hatırlat\" → hatırlatma ona gider"
 )
 PHOTO_MENU = InlineKeyboardMarkup([
@@ -75,6 +76,9 @@ ALERT_INTERVAL_SECONDS = 7200
 ALERT_FIRST_HOUR = 7
 ALERT_LAST_HOUR = 21
 SPECIAL_DAY_ALERT = time(9, 0)
+GONUL_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("🌹 Gönlünü al", callback_data="love:gonul")]])
+MORAL_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("💌 Moral ver", callback_data="love:moral")]])
+BARIS_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("🕊 Barıştık", callback_data="love:baris")]])
 PARTNER_NEWS_COUNT = 5
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
@@ -121,6 +125,8 @@ COMMANDS = [
     BotCommand("devamsizlik", "Devamsızlık durumu"),
     BotCommand("davet", "Sevgilini Saha'ya ekle"),
     BotCommand("ozledim", "Sevgiline özlediğini ilet"),
+    BotCommand("gonlunual", "Boykottaysa gönlünü al"),
+    BotCommand("boykot", "Boykot istatistikleri"),
 ]
 PARTNER_COMMANDS = [BotCommand("panel", "Paneli aç")]
 
@@ -263,6 +269,7 @@ async def send_partner_briefing(context, day: date | None = None, evening: bool 
         note = pending[0] if pending else None
     suffix = f"\n\n💌 Kayra'dan not:\n{note['text']}" if note else ""
     try:
+        await send_gif(context.bot, p["id"], "iyi_geceler" if evening else "gunaydin")
         await deliver_briefing(context.bot, p["id"], result, s, today, suffix)
     except Exception as e:
         log.warning("Partner özeti gönderilemedi: %r", e)
@@ -396,7 +403,7 @@ async def kus_reminder(context) -> None:
     if partner.is_quiet(now):
         return
     since = partner.duration(datetime.fromisoformat(state["since"]), now)
-    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {p['name']} hâlâ boykotta ({since}). Gönlünü aldın mı? 🌹")
+    await context.bot.send_message(d["cfg"].owner_id, f"⏰ {p['name']} hâlâ boykotta ({since}). Gönlünü aldın mı? 🌹", reply_markup=GONUL_BUTTON)
 
 
 async def restore_kus(app: Application) -> None:
@@ -437,40 +444,99 @@ async def claim_invite(update, context) -> bool:
     return True
 
 
+async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, reply_markup=None) -> None:
+    try:
+        await bot.send_animation(chat_id, gifs.pick(kind), caption=caption, reply_markup=reply_markup)
+    except TimedOut:
+        log.warning("GIF zaman aşımına uğradı (%s), büyük ihtimalle ulaştı", kind)
+    except Exception as e:
+        log.warning("GIF gönderilemedi (%s): %r", kind, e)
+        if caption:
+            await bot.send_message(chat_id, caption, reply_markup=reply_markup)
+
+
+async def gif_to_partner(bot, d, kind: str, caption: str | None = None, reply_markup=None) -> bool:
+    p = d.get("partner")
+    if not p:
+        return False
+    try:
+        await send_gif(bot, p["id"], kind, caption, reply_markup)
+    except Exception as e:
+        log.warning("Partnere GIF gönderilemedi: %r", e)
+        await bot.send_message(d["cfg"].owner_id, unreachable(p))
+        return False
+    return True
+
+
 async def partner_update(update, context) -> None:
-    if update.callback_query:
-        await update.callback_query.answer()
+    d = _deps(context)
+    query = update.callback_query
+    if query:
+        await query.answer()
+        if query.data == "love:baris":
+            await query.edit_message_reply_markup(None)
+            await partner_action(context, d, partner.BARIS)
         return
     msg = update.message
     if msg is None or not msg.text:
         return
-    d = _deps(context)
-    p, owner, now, text = d["partner"], d["cfg"].owner_id, _now(context), msg.text.strip()
+    text = msg.text.strip()
+    if text.startswith("/panel"):
+        await panel(update, context)
+        return
+    await partner_action(context, d, text)
+
+
+async def partner_action(context, d, text: str) -> None:
+    bot, p, owner, now = context.bot, d["partner"], d["cfg"].owner_id, _now(context)
+    pid, name = p["id"], p["name"]
     state = await d["db"].get_kv("kus")
     if text in partner.KUS_ALIASES:
         if state:
-            await msg.reply_text(f"Boykot zaten sürüyor 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+            await bot.send_message(pid, f"Boykot zaten sürüyor 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
             return
         await d["db"].set_kv("kus", {"since": now.isoformat()})
         schedule_kus(context.job_queue)
-        await context.bot.send_message(owner, f"🚨 BOYKOT BAŞLADI! {p['name']} seni boykot ediyor. Hemen gönlünü al 🌹")
-        await msg.reply_text(f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+        await send_gif(bot, owner, "boykot", f"🚨 BOYKOT BAŞLADI! {name} seni boykot ediyor. Hemen gönlünü al 🌹", GONUL_BUTTON)
+        await bot.send_message(pid, f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
     elif text == partner.BARIS:
         if not state:
-            await msg.reply_text("Şu an boykot yok 🙂", reply_markup=partner_keyboard(False))
+            await bot.send_message(pid, "Şu an boykot yok 🙂", reply_markup=partner_keyboard(False))
             return
         await d["db"].delete_kv("kus")
         stop_kus(context.job_queue)
-        since = partner.duration(datetime.fromisoformat(state["since"]), now)
-        await context.bot.send_message(owner, f"🕊 {p['name']} boykotu bitirdi, barıştınız! Boykot {since} sürdü.")
-        await msg.reply_text("🕊 Barıştınız! Kayra'ya haber verdim 💕", reply_markup=partner_keyboard(False))
+        since = datetime.fromisoformat(state["since"])
+        await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, now))
+        await send_gif(bot, owner, "baris", f"🕊 {name} boykotu bitirdi, barıştınız! Boykot {partner.duration(since, now)} sürdü.")
+        await send_gif(bot, pid, "baris", "🕊 Barıştınız! Kayra'ya haber verdim 💕", partner_keyboard(False))
     elif text == partner.OZLEDIM:
-        await context.bot.send_message(owner, f"🥺 {p['name']} seni özledi!")
-        await msg.reply_text("🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
-    elif text.startswith("/panel"):
-        await panel(update, context)
+        await send_gif(bot, owner, "ozledim", f"🥺 {name} seni özledi!")
+        await bot.send_message(pid, "🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
+    elif text == partner.MORAL:
+        await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
+        await send_gif(bot, pid, "moral", "💕 Kayra'ya haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
     else:
-        await msg.reply_text(partner.guide(p["name"], p["briefing_time"]), reply_markup=partner_keyboard(bool(state)))
+        await bot.send_message(pid, partner.guide(name, p["briefing_time"]), reply_markup=partner_keyboard(bool(state)))
+
+
+async def owner_love_action(context, kind: str) -> None:
+    d = _deps(context)
+    bot, owner, p = context.bot, d["cfg"].owner_id, d.get("partner")
+    if not p:
+        await bot.send_message(owner, "Önce /davet ile sevgilini Saha'ya ekle.")
+        return
+    if kind == "gonul":
+        if not await d["db"].get_kv("kus"):
+            await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
+            return
+        if await gif_to_partner(bot, d, "gonlunu_al", "🥺 Kayra özür diliyor... Barışalım mı? 🌹", BARIS_BUTTON):
+            await bot.send_message(owner, "🌹 Gönlünü almaya çalıştım, şimdi sıra onda 🤞")
+    elif kind == "moral":
+        if await gif_to_partner(bot, d, "moral", "💕 Kayra seni düşünüyor, her şey yoluna girecek 🌸"):
+            await bot.send_message(owner, "💌 Moral gönderildi.")
+    elif kind == "ozledim":
+        if await gif_to_partner(bot, d, "ozledim", "🥺 Kayra seni özledi!"):
+            await bot.send_message(owner, "🥺 İlettim.")
 
 
 async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -481,12 +547,17 @@ async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def ozledim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await owner_love_action(context, "ozledim")
+
+
+async def gonlunual(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await owner_love_action(context, "gonul")
+
+
+async def boykot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     d = _deps(context)
-    if not d.get("partner"):
-        await update.message.reply_text("Önce /davet ile sevgilini Saha'ya ekle.")
-        return
-    if await notify_partner(context.bot, d, "🥺 Kayra seni özledi!"):
-        await update.message.reply_text("🥺 İlettim.")
+    s = partner.stats(await d["db"].get_kv("kus_log"), _now(context))
+    await update.message.reply_text(partner.stats_text(s))
 
 
 def is_reminder_request(text: str) -> bool:
@@ -594,6 +665,9 @@ def _merge(kind: str, old, new):
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+    if query.data and query.data.startswith("love:"):
+        await owner_love_action(context, query.data.split(":", 1)[1])
+        return
     pending = context.user_data.setdefault("pending", {})
     item = pending.get(query.message.message_id)
     if item is None:
@@ -905,6 +979,8 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("devamsizlik", devamsizlik))
     app.add_handler(CommandHandler("davet", davet))
     app.add_handler(CommandHandler("ozledim", ozledim))
+    app.add_handler(CommandHandler("gonlunual", gonlunual))
+    app.add_handler(CommandHandler("boykot", boykot))
     app.add_handler(MessageHandler(filters.PHOTO, photo))
     app.add_handler(MessageHandler(filters.VOICE, voice))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))

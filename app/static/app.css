@@ -222,6 +222,10 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
 .love-status { margin: 4px 0 0; opacity: .9; }
 .love-lines { white-space: pre-wrap; margin: 0; padding: 12px 0; }
 .row input.txt { border: 0; background: none; text-align: right; font-weight: 600; font-size: 16px; color: var(--accent); min-width: 0; width: 160px; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 14px 16px; text-align: center; }
+.stats strong { display: block; font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.stats span { color: var(--hint); font-size: 13px; }
+.stats .wide { grid-column: 1 / -1; text-align: left; color: var(--hint); font-size: 14px; margin: 4px 0 0; }
 .guide { padding: 4px 16px; }
 .guide p { margin: 12px 0; font-size: 15px; }
 .guide b { font-weight: 600; }
