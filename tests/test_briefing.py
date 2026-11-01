@@ -19,7 +19,7 @@ async def _boom():
 
 
 def _src(**over):
-    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"), tasks=_ok("Yaklaşan ödev ya da sınav yok."), school=_ok("🎯 YKS'ye 252 gün"))
+    base = dict(weather=_ok(W), lessons=_ok("• Mat"), finance=_ok("Dolar: 41"), news=_ok("• Haber"), tasks=_ok("Yaklaşan ödev ya da sınav yok."), school=_ok("🎯 YKS'ye 252 gün"), examcal=_ok("Yaklaşan sınav yok 🎉"))
     base.update(over)
     return Sources(**base)
 
@@ -33,7 +33,7 @@ def _settings(**sections):
 async def test_all_sections_in_order():
     b = await build(date(2026, 10, 9), _src(), _settings())
     assert b.text.startswith("Günaydın Kayra! ☀️ 9 Ekim Cuma")
-    assert b.text.index("🌤 Hava\nSabah 12°") < b.text.index("📚 Bugünün dersleri\n• Mat") < b.text.index("💱 Piyasa") < b.text.index("📰 Haberler")
+    assert b.text.index("🌤 Hava\nSabah 12°") < b.text.index("📚 Bugünün dersleri\n• Mat") < b.text.index("🧪 Sınav takvimi") < b.text.index("💱 Piyasa") < b.text.index("📰 Haberler")
     assert "👕 İnce ceket al." in b.text
     assert b.weather is W
     assert "🌤 Hava" not in b.text_without_weather and "📚 Bugünün dersleri" in b.text_without_weather
@@ -87,7 +87,18 @@ async def test_tasks_section_in_morning():
     src = _src(tasks=_ok("📝 Fizik — 10.10 cumartesi (yarın) #1"))
     b = await build(date(2026, 10, 9), src, _settings())
     assert "📌 Ödev ve sınavlar\n📝 Fizik" in b.text
-    assert b.text.index("📚") < b.text.index("📌") < b.text.index("💱")
+    assert b.text.index("📚") < b.text.index("📌") < b.text.index("🧪") < b.text.index("💱")
+
+
+async def test_examcal_section_shows_countdown():
+    src = _src(examcal=_ok("🧪 3 gün sonra: Matematik yazılısı (12.10 09:40)"))
+    b = await build(date(2026, 10, 9), src, _settings())
+    assert "🧪 Sınav takvimi\n🧪 3 gün sonra: Matematik yazılısı" in b.text
+
+
+async def test_examcal_section_can_be_disabled():
+    b = await build(date(2026, 10, 9), _src(), _settings(examcal=False))
+    assert "🧪" not in b.text
 
 
 async def test_evening_header_and_sections():

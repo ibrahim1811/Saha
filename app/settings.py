@@ -4,7 +4,7 @@ from datetime import date
 
 from app import news
 
-SECTIONS = ["school", "weather", "lessons", "tasks", "finance", "news"]
+SECTIONS = ["school", "weather", "lessons", "tasks", "examcal", "finance", "news"]
 DEFAULTS = {
     "briefing_time": "07:00",
     "sections": {s: True for s in SECTIONS},

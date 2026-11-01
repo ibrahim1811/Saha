@@ -1,3 +1,4 @@
+import json
 import time as _time
 from datetime import datetime, time, timedelta, timezone
 from types import SimpleNamespace
@@ -22,6 +23,7 @@ class Store:
         self.schedules = {}
         self.notes = [{"id": 1, "text": "Süt al", "source": "ses", "created_at": datetime(2026, 10, 9, 10, tzinfo=timezone.utc)}]
         self.reminders = {}
+        self.exam_calendar = {}
 
     async def get_settings(self):
         return self.settings
@@ -57,6 +59,22 @@ class Store:
 
     async def delete_reminder(self, rid):
         return self.reminders.pop(rid, None) is not None
+
+    async def add_exam_entry(self, subject, day, at_time="", kind="yazılı", branch=""):
+        entry_id = len(self.exam_calendar) + 1
+        self.exam_calendar[entry_id] = {
+            "subject": subject, "day": day, "at_time": at_time, "kind": kind, "branch": branch,
+        }
+        return entry_id
+
+    async def list_exam_calendar(self):
+        return [{"id": k, **v} for k, v in self.exam_calendar.items()]
+
+    async def exam_calendar_between(self, start, end):
+        return [e for e in await self.list_exam_calendar() if start <= e["day"] <= end]
+
+    async def delete_exam_entry(self, entry_id):
+        return self.exam_calendar.pop(entry_id, None) is not None
 
     kv: dict = {}
     love_notes: list = []
@@ -400,6 +418,29 @@ class SchoolStore(TaskStore):
 
     async def delete_exam(self, eid):
         return self.exams.pop(eid, None) is not None
+
+
+async def test_exam_calendar_crud():
+    day = (datetime.now(TZ).date() + timedelta(days=5)).isoformat()
+    tg = _tg(FakeLLM(reply=json.dumps({"ders": "Matematik", "tarih": day, "saat": "09:40", "tur": "yazılı"})))
+    tg.bot_data["db"] = SchoolStore()
+    async with TestClient(TestServer(build_web_app(tg))) as c:
+        resp = await c.post("/api/exam-calendar", json={"text": "matematik yazılısı 5 gün sonra 09:40"}, headers=_auth())
+        assert resp.status == 200
+        created = await resp.json()
+        assert created["subject"] == "Matematik" and created["at_time"] == "09:40" and created["label"] == "5 gün sonra"
+
+        listed = await (await c.get("/api/exam-calendar", headers=_auth())).json()
+        assert [e["subject"] for e in listed] == ["Matematik"]
+
+        school = await (await c.get("/api/school", headers=_auth())).json()
+        assert school["exam_calendar"][0]["kind"] == "yazılı" and school["exam_calendar"][0]["label"] == "5 gün sonra"
+
+        assert (await c.delete(f"/api/exam-calendar/{created['id']}", headers=_auth())).status == 200
+        assert (await c.delete(f"/api/exam-calendar/{created['id']}", headers=_auth())).status == 404
+
+        tg.bot_data["llm"] = FakeLLM(reply=json.dumps({"ders": None}))
+        assert (await c.post("/api/exam-calendar", json={"text": "merhaba"}, headers=_auth())).status == 400
 
 
 async def test_school_overview_and_crud():

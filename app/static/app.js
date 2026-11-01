@@ -481,6 +481,19 @@
       .join("");
   }
 
+  function examcalItems(list) {
+    if (!list.length) return '<p class="empty">Sınav takviminde kayıt yok. Bota takvimin fotoğrafını atabilir ya da aşağıya yazabilirsin.</p>';
+    return list
+      .map((e) => {
+        const soon = e.label === "bugün" || e.label === "yarın" || (e.label.endsWith("gün sonra") && parseInt(e.label, 10) <= 3);
+        const icon = e.kind === "deneme" ? "🎯" : "🧪";
+        const when = `${new Date(e.day + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", weekday: "long", timeZone: TZ })}${e.at_time ? " · " + e.at_time : ""}`;
+        const title = `${e.subject} ${e.kind}${e.branch ? " · " + e.branch : ""}`;
+        return `<div class="item"><span aria-hidden="true">${icon}</span><div class="item-main"><p class="item-title">${esc(title)}</p><p class="item-sub">${esc(when)}</p></div><span class="badge${soon ? " soon" : ""}">${esc(e.label)}</span><button class="icon-btn" data-examcal-del="${e.id}" aria-label="Sil">${TRASH}</button></div>`;
+      })
+      .join("");
+  }
+
   async function loadTasks() {
     const list = await api("GET", "/api/tasks" + (state.showDone ? "?all=1" : ""));
     $("tasks").innerHTML = list.length ? taskItems(list, true) : '<p class="empty">Ödev ya da sınav yok. Yukarıya "matematik sınavı 20 ekim" gibi yazabilirsin.</p>';
@@ -535,6 +548,8 @@
     $("exam-list").innerHTML = d.exams.length
       ? [...d.exams].reverse().slice(0, 6).map((e) => `<div class="item"><span class="badge">${esc(e.kind)}</span><div class="item-main"><p class="item-title">${fmtNum(e.total)} net</p><p class="item-sub">${esc(new Date(e.taken + "T12:00:00+03:00").toLocaleDateString("tr-TR", { day: "numeric", month: "long", timeZone: TZ }))}</p></div><button class="icon-btn" data-exam-del="${e.id}" aria-label="Sil">${TRASH}</button></div>`).join("")
       : '<p class="empty">Henüz deneme yok.</p>';
+
+    $("examcal-list").innerHTML = examcalItems(d.exam_calendar || []);
 
     $("grade-overall").textContent = fmtNum(d.grades.overall);
     $("grade-list").innerHTML = d.grades.subjects.length
@@ -626,6 +641,10 @@
       e.preventDefault();
       postText("/api/exams", "exam-input", "Deneme kaydedildi");
     });
+    $("examcal-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      postText("/api/exam-calendar", "examcal-input", "Sınav takvime eklendi");
+    });
     $("grade-form").addEventListener("submit", (e) => {
       e.preventDefault();
       postText("/api/grades", "grade-input", "Not kaydedildi");
@@ -642,9 +661,15 @@
       }
     });
     $("view-school").addEventListener("click", async (e) => {
-      const b = e.target.closest("[data-exam-del], [data-grade-del], [data-abs-del]");
+      const b = e.target.closest("[data-exam-del], [data-grade-del], [data-abs-del], [data-examcal-del]");
       if (!b || !(await confirmAsk("Bu kayıt silinsin mi?"))) return;
-      const path = b.dataset.examDel ? "/api/exams/" + b.dataset.examDel : b.dataset.gradeDel ? "/api/grades/" + b.dataset.gradeDel : "/api/absences/" + b.dataset.absDel;
+      const path = b.dataset.examDel
+        ? "/api/exams/" + b.dataset.examDel
+        : b.dataset.gradeDel
+          ? "/api/grades/" + b.dataset.gradeDel
+          : b.dataset.examcalDel
+            ? "/api/exam-calendar/" + b.dataset.examcalDel
+            : "/api/absences/" + b.dataset.absDel;
       try {
         await api("DELETE", path);
         toast("Silindi");

@@ -1,6 +1,9 @@
 # Saha
 
-Saha (@Saha_habercisi_bot) — Kayra'nın kişisel Telegram asistanı: sabah özeti (hava + kıyafet önerisi, dersler, piyasa, haberler), ders programı, sesli not, hatırlatıcı, AI sohbet.
+Saha (@Saha_habercisi_bot) — Kayra'nın kişisel Telegram asistanı: sabah özeti (hava + kıyafet önerisi, dersler, piyasa, haberler), ders programı, sınav takvimi, sesli not, hatırlatıcı, AI sohbet.
+
+## Sınav takvimi
+Sınav takviminin fotoğrafını bota at → **🧪 Sınav takvimi** → takvimde birden fazla şube varsa bot "hangisi sensin?" diye sorar (seçimin hatırlanır), okuduğu sınavları onayına sunar ve `exam_calendar` tablosuna işler. Panelin **Okul** sekmesinden liste, elle ekleme ve silme yapılabilir. Sabah özetinde yaklaşan sınavlar geri sayımla gelir: 3 gün kala, 1 gün kala ve sınav sabahı. Komutlar: `/sinavlar`, `/sinavsil <id>`.
 
 ## Gereken anahtarlar
 | Değişken | Nereden |

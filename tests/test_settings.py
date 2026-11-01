@@ -6,7 +6,7 @@ from app.settings import DEFAULTS, SettingsError, merge, validate
 def test_merge_defaults_with_env_time():
     s = merge(None, "06:30")
     assert s["briefing_time"] == "06:30"
-    assert s["sections"] == {"school": True, "weather": True, "lessons": True, "tasks": True, "finance": True, "news": True}
+    assert s["sections"] == {"school": True, "weather": True, "lessons": True, "tasks": True, "examcal": True, "finance": True, "news": True}
     assert s["photo_card"] is True and s["news_count"] == 5
 
 

@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app import calendar_tr, finance, news, outfit, school, tasks, weather
+from app import calendar_tr, examcal, finance, news, outfit, school, tasks, weather
 from app.schedule import format_lessons, lessons_for
 from app.weather import DayWeather
 
@@ -17,10 +17,11 @@ SECTIONS = [
     ("weather", "🌤 Hava", "Hava"),
     ("lessons", "📚 Bugünün dersleri", "Ders programı"),
     ("tasks", "📌 Ödev ve sınavlar", "Ödev ve sınavlar"),
+    ("examcal", "🧪 Sınav takvimi", "Sınav takvimi"),
     ("finance", "💱 Piyasa", "Piyasa"),
     ("news", "📰 Haberler", "Haberler"),
 ]
-EVENING_SECTIONS = {"weather", "lessons", "tasks", "news"}
+EVENING_SECTIONS = {"weather", "lessons", "tasks", "examcal", "news"}
 EVENING_TITLES = {"lessons": "📚 Yarının dersleri", "news": "📰 Günün haberleri"}
 WEATHER_SECTION = SECTIONS[1]
 
@@ -43,6 +44,7 @@ class Sources:
     news: Callable[[], Awaitable[str]]
     tasks: Callable[[], Awaitable[str]]
     school: Callable[[], Awaitable[str]]
+    examcal: Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -119,6 +121,10 @@ def make_sources(
         items = await db.upcoming_tasks(today + timedelta(days=7))
         return tasks.format_tasks(items, ref_day or today)
 
+    async def examcal_section() -> str:
+        items = await db.exam_calendar_between(today, today + timedelta(days=14))
+        return examcal.format_upcoming(items, ref_day or today)
+
     async def school_section() -> str:
         lines = [calendar_tr.school_line(today, date.fromisoformat(settings["yks_date"]), settings["yks_estimated"])]
         exams = await db.list_exams()
@@ -135,4 +141,5 @@ def make_sources(
         finance=lambda: finance.fetch(http),
         news=lambda: news.fetch(http, settings["news_count"], settings.get("news_topics")),
         tasks=tasks_section,
+        examcal=examcal_section,
     )

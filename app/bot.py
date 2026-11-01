@@ -15,7 +15,8 @@ from telegram.ext import (
 from telegram.error import Conflict, NetworkError, TimedOut
 
 from app import (
-    briefing, calendar_tr, card, chat, gifs, intents, love, partner, reminders, schedule, school, settings, tasks, weather,
+    briefing, calendar_tr, card, chat, examcal, gifs, intents, love, partner, reminders, schedule, school, settings, tasks,
+    weather,
 )
 from app.llm import LLMError
 from app.textutil import split_message
@@ -26,7 +27,7 @@ LLM_DOWN = "⚠️ Yapay zekâya şu an ulaşamıyorum, birazdan tekrar dener mi
 
 HELP = (
     "Merhaba Kayra, ben Saha! Yapabileceklerim:\n"
-    "📷 Fotoğraf at → ders programı, ders notu ya da soru çözümü\n"
+    "📷 Fotoğraf at → ders programı, sınav takvimi, ders notu ya da soru çözümü\n"
     "📊 \"fizik 1. yazılı 85\" → not, \"tyt deneme 78 net\" → deneme, \"bugün okula gitmedim\" → devamsızlık\n"
     "🎤 Bunların hepsini sesli mesajla da söyleyebilirsin\n"
     "🎤 Sesli mesaj at → nota çeviririm\n"
@@ -39,6 +40,8 @@ HELP = (
     "/hatirlat <metin>\n"
     "📌 \"fizik ödevi cuma teslim\" yaz → ödev/sınav olarak kaydederim\n"
     "/odevler ödev ve sınavlar, /bitti <id> tamamlandı\n"
+    "🧪 Sınav takvimi fotoğrafı at → sınavlarını takvime işlerim\n"
+    "/sinavlar yaklaşan sınavlar, /sinavsil <id> takvimden sil\n"
     "/hatirlaticilar bekleyen hatırlatıcılar\n"
     "/sil <id> hatırlatıcıyı sil\n\n"
     "💕 /davet sevgilini Saha'ya ekle, /ozledim ona özlediğini ilet\n"
@@ -47,6 +50,7 @@ HELP = (
 )
 PHOTO_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📚 Ders programı", callback_data="pick:program")],
+    [InlineKeyboardButton("🧪 Sınav takvimi", callback_data="pick:examcal")],
     [InlineKeyboardButton("📝 Ders notu", callback_data="pick:note")],
     [InlineKeyboardButton("❓ Soru çöz", callback_data="pick:solve")],
 ])
@@ -85,6 +89,10 @@ MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
     [InlineKeyboardButton("🔁 Tekrar oku", callback_data="retry")],
 ])
+EXAM_CONFIRM_BUTTONS = InlineKeyboardMarkup([[
+    InlineKeyboardButton("✅ Takvime ekle", callback_data="examsave"),
+    InlineKeyboardButton("🔁 Tekrar oku", callback_data="exretry"),
+]])
 
 
 def _deps(context):
@@ -120,6 +128,8 @@ COMMANDS = [
     BotCommand("notlar", "Son notlar"),
     BotCommand("hatirlaticilar", "Bekleyen hatırlatıcılar"),
     BotCommand("odevler", "Ödev ve sınavlar"),
+    BotCommand("sinavlar", "Sınav takvimi"),
+    BotCommand("sinavsil", "Sınavı takvimden sil"),
     BotCommand("yks", "YKS geri sayım ve deneme netleri"),
     BotCommand("ortalama", "Ders notları ve ortalama"),
     BotCommand("devamsizlik", "Devamsızlık durumu"),
@@ -654,6 +664,82 @@ async def _solve(update, query, context, item: dict) -> None:
     await send_text(context.bot, update.effective_chat.id, f"❓ {question[:1000]}\n\n{answer}")
 
 
+def _branch_keyboard(ordered: list[str], saved: str | None) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(("✓ " if name == saved else "") + name, callback_data=f"examb:{i}")
+        for i, name in enumerate(ordered)
+    ]
+    buttons.append(InlineKeyboardButton("Hepsi", callback_data="examb:-1"))
+    return InlineKeyboardMarkup([buttons[i : i + 2] for i in range(0, len(buttons), 2)])
+
+
+async def _read_examcal(query, context, item: dict) -> None:
+    d = _deps(context)
+    await query.edit_message_text("Sınav takvimini okuyorum… ⏳")
+    try:
+        branches, exams = await examcal.read_photo(item["photo"], d["llm"], _now(context).date())
+    except Exception:
+        log.exception("Sınav takvimi fotoğrafı okunamadı")
+        await query.edit_message_text("Sınav takvimini okuyamadım, daha net bir fotoğraf atar mısın?")
+        return
+    try:
+        saved = (await d["db"].get_kv(examcal.BRANCH_KEY) or {}).get("branch")
+    except Exception:
+        log.exception("Kayıtlı şube okunamadı")
+        saved = None
+    ordered = sorted(branches, key=lambda name: name != saved)
+    item["examcal"] = {"branches": branches, "exams": exams, "ordered": ordered, "saved": saved}
+    if len(branches) < 2:
+        await _preview_examcal(query, context, item, branches[0] if branches else None)
+        return
+    hint = f"\n\nSon seçimin: {saved}" if saved else ""
+    await query.edit_message_text(
+        f"Takvimde {len(branches)} şube var. Hangisi sensin?{hint}", reply_markup=_branch_keyboard(ordered, saved)
+    )
+
+
+async def _preview_examcal(query, context, item: dict, branch: str | None) -> None:
+    d = _deps(context)
+    today = _now(context).date()
+    exams = examcal.future_only(examcal.filter_branch(item["examcal"]["exams"], branch), today)
+    if not exams:
+        ordered = item["examcal"].get("ordered") or item["examcal"]["branches"]
+        markup = _branch_keyboard(ordered, item["examcal"].get("saved")) if len(ordered) > 1 else None
+        await query.edit_message_text(
+            "Bu şubede yaklaşan sınav bulamadım. Başka şubeyi seçebilir ya da yeni bir fotoğraf atabilirsin.",
+            reply_markup=markup,
+        )
+        return
+    item["examcal_sel"] = {"branch": branch or "", "exams": exams}
+    existing = await d["db"].list_exam_calendar()
+    duplicates = len(exams) - len(examcal.plan_add(existing, exams))
+    note = f"{duplicates} sınav takvimde zaten var, onları atlarım." if duplicates else "Doğru mu?"
+    baslik = f"{branch} sınavları" if branch else "Sınav takvimi"
+    await query.edit_message_text(
+        f"{baslik} — şunu okudum:\n\n{examcal.format_preview(exams, today)[:3500]}\n\n{note}",
+        reply_markup=EXAM_CONFIRM_BUTTONS,
+    )
+
+
+async def _save_examcal(context, item: dict) -> str:
+    d = _deps(context)
+    sel = item["examcal_sel"]
+    today = _now(context).date()
+    existing = await d["db"].list_exam_calendar()
+    to_add = examcal.plan_add(existing, sel["exams"])
+    if sel["branch"]:
+        await d["db"].set_kv(examcal.BRANCH_KEY, {"branch": sel["branch"]})
+    for exam in to_add:
+        await d["db"].add_exam_entry(exam["subject"], exam["day"], exam["at_time"], exam["kind"], exam["branch"])
+    item.pop("examcal_sel", None)
+    if not to_add:
+        return "Bu sınavlar takvimde zaten vardı, yeni bir şey eklemedim.\n\n/sinavlar"
+    return (
+        f"✅ {len(to_add)} sınav takvime eklendi.\n\n{examcal.format_preview(to_add, today)[:3500]}\n\n"
+        "3 gün kala, 1 gün kala ve sınav sabahı sabah özetinde hatırlatacağım."
+    )
+
+
 def _format(kind: str, data) -> str:
     return schedule.format_okul(data) if kind == "okul" else schedule.format_lessons(data)
 
@@ -675,6 +761,22 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if query.data == "pick:program":
         await query.edit_message_text("Bu hangi program?", reply_markup=KIND_BUTTONS)
+    elif query.data == "pick:examcal":
+        await _read_examcal(query, context, item)
+    elif query.data.startswith("examb:") and "examcal" in item:
+        index = int(query.data.split(":")[1])
+        ordered = item["examcal"].get("ordered") or item["examcal"]["branches"]
+        if index >= len(ordered):
+            await query.edit_message_text("Bu seçim artık geçerli değil, fotoğrafı tekrar atar mısın?")
+            return
+        branch = None if index < 0 else ordered[index]
+        await _preview_examcal(query, context, item, branch)
+    elif query.data == "exretry" and "examcal" in item:
+        await _read_examcal(query, context, item)
+    elif query.data == "examsave" and "examcal_sel" in item:
+        text = await _save_examcal(context, item)
+        pending.pop(query.message.message_id, None)
+        await query.edit_message_text(text)
     elif query.data == "pick:note":
         await _read_note(query, context, item)
     elif query.data == "pick:solve":
@@ -843,6 +945,20 @@ async def bitti(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("✅ Tamamlandı olarak işaretlendi." if done else "Bu numarada ödev ya da sınav yok.")
 
 
+async def sinavlar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    d = _deps(context)
+    items = await d["db"].list_exam_calendar()
+    await send_text(context.bot, update.effective_chat.id, examcal.format_all(items, _now(context).date()))
+
+
+async def sinavsil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or not re.fullmatch(r"#?[0-9]+", context.args[0]):
+        await update.message.reply_text("Kullanım: /sinavsil 3")
+        return
+    ok = await _deps(context)["db"].delete_exam_entry(int(context.args[0].lstrip("#")))
+    await update.message.reply_text("🗑 Sınav takviminden silindi." if ok else "Bu numarada sınav yok.")
+
+
 async def _school_reply(update, coro, on_ok) -> bool:
     try:
         result = await coro
@@ -974,6 +1090,8 @@ def register(app: Application) -> None:
     app.add_handler(CommandHandler("sil", sil))
     app.add_handler(CommandHandler("odevler", odevler))
     app.add_handler(CommandHandler("bitti", bitti))
+    app.add_handler(CommandHandler("sinavlar", sinavlar))
+    app.add_handler(CommandHandler("sinavsil", sinavsil))
     app.add_handler(CommandHandler("yks", yks))
     app.add_handler(CommandHandler("ortalama", ortalama))
     app.add_handler(CommandHandler("devamsizlik", devamsizlik))

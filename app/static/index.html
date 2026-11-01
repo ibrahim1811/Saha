@@ -112,6 +112,14 @@
       </form>
       <div class="block" id="exam-list"></div>
 
+      <h2 class="group">Sınav takvimi</h2>
+      <div class="block" id="examcal-list"></div>
+      <form class="block compose" id="examcal-form">
+        <input id="examcal-input" type="text" autocomplete="off" placeholder="matematik yazılısı 10 kasım 09:40" aria-label="Yeni sınav">
+        <button class="btn btn-primary" type="submit">Ekle</button>
+      </form>
+      <p class="foot">Bota sınav takvimi fotoğrafı atarsan hepsini birden işlerim. Sınavdan 3 gün önce, 1 gün önce ve sınav sabahı sabah özetinde hatırlatırım.</p>
+
       <h2 class="group">Ders notları</h2>
       <div class="block">
         <div class="overall"><span>Ağırlıklı ortalama</span><strong id="grade-overall">–</strong></div>
@@ -180,6 +188,7 @@
         <label class="row"><span>Hava ve kıyafet önerisi</span><input type="checkbox" class="switch" data-section="weather"></label>
         <label class="row"><span>Bugünün dersleri</span><input type="checkbox" class="switch" data-section="lessons"></label>
         <label class="row"><span>Ödev ve sınavlar</span><input type="checkbox" class="switch" data-section="tasks"></label>
+        <label class="row"><span>Sınav takvimi (geri sayım)</span><input type="checkbox" class="switch" data-section="examcal"></label>
         <label class="row"><span>Dolar, euro, gram altın</span><input type="checkbox" class="switch" data-section="finance"></label>
         <label class="row"><span>Haber başlıkları</span><input type="checkbox" class="switch" data-section="news"></label>
         <div class="row">

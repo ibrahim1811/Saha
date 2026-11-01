@@ -459,7 +459,7 @@ async def test_photo_menu_first_asks_purpose():
     upd = _photo_update(b"img", 500)
     await botmod.photo(upd, ctx)
     markup = upd.message.reply_text.await_args.kwargs["reply_markup"]
-    assert [b.callback_data for row in markup.inline_keyboard for b in row] == ["pick:program", "pick:note", "pick:solve"]
+    assert [b.callback_data for row in markup.inline_keyboard for b in row] == ["pick:program", "pick:examcal", "pick:note", "pick:solve"]
 
 
 async def test_pick_program_shows_kind_buttons():
@@ -494,6 +494,94 @@ async def test_note_flow_saves_with_subject():
     fizik = [b.callback_data for row in markup.inline_keyboard for b in row if b.text == "Fizik"][0]
     await botmod.on_button(_query_update(fizik, 500), ctx)
     db.add_note.assert_awaited_once_with("Newton'un 2. yasası F = m·a", "foto", "Fizik")
+
+
+def _examcal_ctx(reply, existing=None, saved=None):
+    db = SimpleNamespace(
+        list_exam_calendar=AsyncMock(return_value=existing or []),
+        add_exam_entry=AsyncMock(return_value=1),
+        get_kv=AsyncMock(return_value={"branch": saved} if saved else None),
+        set_kv=AsyncMock(),
+    )
+    return SimpleNamespace(
+        user_data={"pending": {500: {"photo": b"img"}}},
+        bot_data={"llm": FakeLLM(reply=json.dumps(reply)), "db": db, "cfg": SimpleNamespace(owner_id=42, tz=TZ)},
+    )
+
+
+def _examcal_json(two_branches=True):
+    today = _dt.now(TZ).date()
+    first, second = today + timedelta(days=8), today + timedelta(days=9)
+    exams = [
+        {"sinif": "12 Say", "tarih": first.isoformat(), "saat": "09:40", "ders": "Matematik", "tur": "yazılı"},
+        {"sinif": "", "tarih": second.isoformat(), "saat": "", "ders": "Türkçe", "tur": "yazılı"},
+    ]
+    if two_branches:
+        exams.append({"sinif": "12 EA", "tarih": second.isoformat(), "saat": "10:00", "ders": "Edebiyat", "tur": "yazılı"})
+    return {"siniflar": ["12 Say", "12 EA"] if two_branches else ["12 Say"], "sinavlar": exams}
+
+
+async def test_examcal_photo_asks_branch_remembered_first():
+    ctx = _examcal_ctx(_examcal_json(), saved="12 EA")
+    update = _query_update("pick:examcal", 500)
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    labels = [b.text for row in markup.inline_keyboard for b in row]
+    assert labels == ["✓ 12 EA", "12 Say", "Hepsi"]
+    assert markup.inline_keyboard[0][0].callback_data == "examb:0"
+
+
+async def test_examcal_branch_preview_filters_and_saves():
+    ctx = _examcal_ctx(_examcal_json(), saved="12 EA")
+    await botmod.on_button(_query_update("pick:examcal", 500), ctx)
+    preview = _query_update("examb:1", 500)
+    await botmod.on_button(preview, ctx)
+    text = preview.callback_query.edit_message_text.await_args.args[0]
+    assert "Matematik" in text and "Türkçe" in text and "Edebiyat" not in text
+    save = _query_update("examsave", 500)
+    await botmod.on_button(save, ctx)
+    saved = [c.args[0] for c in ctx.bot_data["db"].add_exam_entry.await_args_list]
+    assert saved == ["Matematik", "Türkçe"]
+    assert ctx.bot_data["db"].set_kv.await_args.args[0] == "exam_branch"
+    assert 500 not in ctx.user_data["pending"]
+    assert "2 sınav takvime eklendi" in save.callback_query.edit_message_text.await_args.args[0]
+
+
+async def test_examcal_single_branch_skips_question():
+    ctx = _examcal_ctx(_examcal_json(two_branches=False))
+    update = _query_update("pick:examcal", 500)
+    await botmod.on_button(update, ctx)
+    markup = update.callback_query.edit_message_text.await_args.kwargs["reply_markup"]
+    assert markup.inline_keyboard[0][0].callback_data == "examsave"
+
+
+async def test_examcal_save_skips_existing_duplicates():
+    existing = [{"id": 3, "subject": "Matematik", "day": _dt.now(TZ).date() + timedelta(days=8), "at_time": "09:40", "kind": "yazılı", "branch": "12 Say"}]
+    ctx = _examcal_ctx(_examcal_json(two_branches=False), existing=existing)
+    await botmod.on_button(_query_update("pick:examcal", 500), ctx)
+    save = _query_update("examsave", 500)
+    await botmod.on_button(save, ctx)
+    assert [c.args[0] for c in ctx.bot_data["db"].add_exam_entry.await_args_list] == ["Türkçe"]
+    assert "1 sınav takvime eklendi" in save.callback_query.edit_message_text.await_args.args[0]
+
+
+async def test_examcal_all_branches_option_keeps_everything():
+    ctx = _examcal_ctx(_examcal_json())
+    await botmod.on_button(_query_update("pick:examcal", 500), ctx)
+    preview = _query_update("examb:-1", 500)
+    await botmod.on_button(preview, ctx)
+    assert "Edebiyat" in preview.callback_query.edit_message_text.await_args.args[0]
+
+
+async def test_examcal_unreadable_photo_asks_again():
+    db = SimpleNamespace(list_exam_calendar=AsyncMock(return_value=[]), get_kv=AsyncMock(return_value=None))
+    ctx = SimpleNamespace(
+        user_data={"pending": {500: {"photo": b"img"}}},
+        bot_data={"llm": FakeLLM(reply="anlamadım"), "db": db, "cfg": SimpleNamespace(owner_id=42, tz=TZ)},
+    )
+    update = _query_update("pick:examcal", 500)
+    await botmod.on_button(update, ctx)
+    assert "okuyamadım" in update.callback_query.edit_message_text.await_args.args[0]
 
 
 async def test_yks_command():

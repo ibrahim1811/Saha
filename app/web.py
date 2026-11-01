@@ -11,7 +11,7 @@ from dataclasses import asdict
 
 from datetime import date
 
-from app import bot, calendar_tr, card, love, news, partner, reminders, schedule, school, settings, tasks, weather
+from app import bot, calendar_tr, card, examcal, love, news, partner, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
@@ -21,6 +21,7 @@ log = logging.getLogger(__name__)
 STATIC = Path(__file__).resolve().parent / "static"
 DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
+EXAM_WINDOW_DAYS = 120
 TG_APP = web.AppKey("tg", object)
 PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action"}
 PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "moral": partner.MORAL}
@@ -52,7 +53,8 @@ async def errors(request: web.Request, handler):
         return _json({"error": "Bunu anlayamadım, örneğe benzer şekilde yazar mısın?"}, 400)
     except tasks.NotATask:
         return _json({"error": "Bunu ödev ya da sınav olarak anlayamadım, tarihiyle yazar mısın?"}, 400)
-    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError, school.SchoolError) as e:
+    except (settings.SettingsError, schedule.ScheduleError, reminders.ReminderError, tasks.TaskError, examcal.ExamCalError,
+            school.SchoolError) as e:
         return _json({"error": str(e)}, 400)
     except web.HTTPException:
         raise
@@ -252,6 +254,24 @@ async def delete_task(request):
     return _json({"ok": True})
 
 
+async def get_exam_calendar(request):
+    d = _data(request)
+    today = _now(d["cfg"].tz).date()
+    items = await d["db"].exam_calendar_between(today, today + timedelta(days=EXAM_WINDOW_DAYS))
+    return _json([{**e, "label": examcal.relative(e["day"], today)} for e in items])
+
+
+async def post_exam_calendar(request):
+    d = _data(request)
+    today = _now(d["cfg"].tz).date()
+    try:
+        exam = await examcal.parse_text(await _text_body(request), today, d["llm"])
+    except examcal.NotAnExam as e:
+        raise ApiError(400, "Bunu sınav olarak anlayamadım, tarihiyle yazar mısın?") from e
+    eid = await d["db"].add_exam_entry(exam["subject"], exam["day"], exam["at_time"], exam["kind"], exam["branch"])
+    return _json({**exam, "id": eid, "label": examcal.relative(exam["day"], today)})
+
+
 async def get_school(request):
     d = _data(request)
     db = d["db"]
@@ -271,6 +291,10 @@ async def get_school(request):
         "exams": exams,
         "summaries": {k: school.exam_summary(exams, k, s.get(f"target_{k.lower()}")) for k in ("TYT", "AYT")},
         "targets": {"TYT": s.get("target_tyt"), "AYT": s.get("target_ayt")},
+        "exam_calendar": [
+            {**e, "label": examcal.relative(e["day"], today)}
+            for e in await db.exam_calendar_between(today, today + timedelta(days=EXAM_WINDOW_DAYS))
+        ],
     })
 
 
@@ -467,6 +491,9 @@ def build_web_app(tg_app) -> web.Application:
         web.post("/api/tasks", post_task),
         web.patch("/api/tasks/{id}", patch_task),
         web.delete("/api/tasks/{id}", delete_task),
+        web.get("/api/exam-calendar", get_exam_calendar),
+        web.post("/api/exam-calendar", post_exam_calendar),
+        web.delete("/api/exam-calendar/{id}", _deleter("delete_exam_entry", "Sınav")),
         web.get("/api/school", get_school),
         web.post("/api/grades", post_grade),
         web.delete("/api/grades/{id}", _deleter("delete_grade", "Not")),

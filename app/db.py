@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS special_days (
     yearly BOOLEAN NOT NULL DEFAULT true,
     counter BOOLEAN NOT NULL DEFAULT false
 );
+CREATE TABLE IF NOT EXISTS exam_calendar (
+    id SERIAL PRIMARY KEY,
+    subject TEXT NOT NULL,
+    day DATE NOT NULL,
+    at_time TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'yazılı',
+    branch TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 
@@ -208,6 +217,29 @@ class DB:
 
     async def delete_exam(self, exam_id: int) -> bool:
         return (await self.pool.execute("DELETE FROM exams WHERE id = $1", exam_id)).endswith(" 1")
+
+    async def add_exam_entry(self, subject: str, day: date, at_time: str = "", kind: str = "yazılı", branch: str = "") -> int:
+        return await self.pool.fetchval(
+            "INSERT INTO exam_calendar (subject, day, at_time, kind, branch) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            subject, day, at_time, kind, branch,
+        )
+
+    async def list_exam_calendar(self) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, subject, day, at_time, kind, branch FROM exam_calendar ORDER BY day, at_time, id"
+        )
+        return [dict(r) for r in rows]
+
+    async def exam_calendar_between(self, start: date, end: date) -> list[dict]:
+        rows = await self.pool.fetch(
+            "SELECT id, subject, day, at_time, kind, branch FROM exam_calendar "
+            "WHERE day BETWEEN $1 AND $2 ORDER BY day, at_time, id",
+            start, end,
+        )
+        return [dict(r) for r in rows]
+
+    async def delete_exam_entry(self, entry_id: int) -> bool:
+        return (await self.pool.execute("DELETE FROM exam_calendar WHERE id = $1", entry_id)).endswith(" 1")
 
     async def recent_notes(self, limit: int = 50) -> list[dict]:
         rows = await self.pool.fetch(
