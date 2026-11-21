@@ -108,6 +108,47 @@ def _now(context) -> datetime:
     return datetime.now(_deps(context)["cfg"].tz)
 
 
+async def _love_names(d, role: str, recipient: str, sender: str) -> dict:
+    nicknames = await d["db"].get_kv("love_nicknames") or {}
+    return partner.nickname_forms(nicknames.get(role, ""), recipient, sender)
+
+
+def default_love_caption(role: str, kind: str, reference: str, duration_text: str = "") -> str:
+    if role == "partner":
+        captions = {
+            "kus": f"🚨 BOYKOT BAŞLADI! {reference} seni boykot ediyor. Hemen gönlünü al 🌹",
+            "baris": f"🕊 {reference} boykotu bitirdi, barıştınız!",
+            "ozledim": f"🥺 {reference} seni özledi!",
+            "seviyorum": f"❤️ {reference} seni seviyor!",
+            "moral": f"😔 {reference} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕",
+        }
+        if duration_text:
+            captions["baris"] += f" Boykot {duration_text} sürdü."
+    else:
+        captions = {
+            "kus": f"😤 {reference} seni boykot etti!",
+            "baris": f"🕊 {reference} barıştığınızı söylüyor!",
+            "gonul": f"🥺 {reference} özür diliyor... Barışalım mı? Lütffeeeennn 🌹",
+            "moral": f"💕 {reference} seni düşünüyor, her şey yoluna girecek 🌸",
+            "ozledim": f"🥺 {reference} seni çookk özledi!",
+            "seviyorum": f"❤️ {reference} seni seviyor! Dünyalar kadar!",
+        }
+    return captions[kind]
+
+
+async def _remember_love_action(d, role: str, chat_id: int, message) -> None:
+    message_id = getattr(message, "message_id", None)
+    if not isinstance(message_id, int):
+        return
+    actions = await d["db"].get_kv("love_undo") or {}
+    actions[role] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "sent_at": datetime.now(d["cfg"].tz).isoformat(),
+    }
+    await d["db"].set_kv("love_undo", actions)
+
+
 async def send_text(bot, chat_id: int, text: str, reply_markup=None) -> None:
     parts = split_message(text)
     for i, part in enumerate(parts):
@@ -577,28 +618,30 @@ async def claim_invite(update, context) -> bool:
     return True
 
 
-async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None) -> None:
+async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None):
     try:
-        await bot.send_animation(chat_id, gifs.pick_selected(kind, gif_id), caption=caption, reply_markup=reply_markup)
+        return await bot.send_animation(chat_id, gifs.pick_selected(kind, gif_id), caption=caption, reply_markup=reply_markup)
     except TimedOut:
         log.warning("GIF zaman aşımına uğradı (%s), büyük ihtimalle ulaştı", kind)
+        return None
     except Exception as e:
         log.warning("GIF gönderilemedi (%s): %r", kind, e)
         if caption:
-            await bot.send_message(chat_id, caption, reply_markup=reply_markup)
+            return await bot.send_message(chat_id, caption, reply_markup=reply_markup)
+        return None
 
 
-async def gif_to_partner(bot, d, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None) -> bool:
+async def gif_to_partner(bot, d, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None):
     p = d.get("partner")
     if not p:
-        return False
+        return None
     try:
-        await send_gif(bot, p["id"], kind, caption, reply_markup, gif_id)
+        message = await send_gif(bot, p["id"], kind, caption, reply_markup, gif_id)
+        return message if message is not None else True
     except Exception as e:
         log.warning("Partnere GIF gönderilemedi: %r", e)
         await bot.send_message(d["cfg"].owner_id, unreachable(p))
-        return False
-    return True
+        return None
 
 
 async def partner_update(update, context) -> None:
@@ -623,6 +666,7 @@ async def partner_update(update, context) -> None:
 async def partner_action(context, d, text: str) -> None:
     bot, p, owner, now = context.bot, d["partner"], d["cfg"].owner_id, _now(context)
     pid, name = p["id"], p["name"]
+    names = await _love_names(d, "partner", "Kayra", name)
     state = await d["db"].get_kv("kus")
     templates = await d["db"].get_kv("partner_love_templates") or {}
     template = lambda kind: templates.get(kind, {})
@@ -633,9 +677,10 @@ async def partner_action(context, d, text: str) -> None:
         await d["db"].set_kv("kus", {"since": now.isoformat()})
         schedule_kus(context.job_queue)
         kus_template = template("kus")
-        kus_text = kus_template.get("text") or f"🚨 BOYKOT BAŞLADI! {name} seni boykot ediyor. Hemen gönlünü al 🌹"
-        await send_gif(bot, owner, "boykot", kus_text, GONUL_BUTTON, kus_template.get("gif"))
-        await bot.send_message(pid, f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas. Ama o seni çok seviyor bunu asla unutmaaa.", reply_markup=partner_keyboard(True))
+        kus_text = kus_template.get("text") or default_love_caption("partner", "kus", names["reference"])
+        sent = await send_gif(bot, owner, "boykot", kus_text, GONUL_BUTTON, kus_template.get("gif"))
+        await _remember_love_action(d, "partner", owner, sent)
+        await bot.send_message(pid, f"Boykot başladı 😤 {names['address']} haber verdim. Barışınca {partner.BARIS} butonuna bas. Ama o seni çok seviyor bunu asla unutmaaa.", reply_markup=partner_keyboard(True))
     elif text == partner.BARIS:
         if not state:
             await bot.send_message(pid, "Şu an boykot yok 🙂", reply_markup=partner_keyboard(False))
@@ -645,23 +690,27 @@ async def partner_action(context, d, text: str) -> None:
         since = datetime.fromisoformat(state["since"])
         await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, now))
         baris_template = template("baris")
-        await send_gif(bot, owner, "baris", baris_template.get("text") or f"🕊 {name} boykotu bitirdi, barıştınız! Boykot {partner.duration(since, now)} sürdü.", gif_id=baris_template.get("gif"))
-        await send_gif(bot, pid, "baris", "🕊 Barıştınızzz! Kayra'ya haber verdim 💕", partner_keyboard(False))
+        sent =         await send_gif(bot, owner, "baris", baris_template.get("text") or default_love_caption("partner", "baris", names["reference"], partner.duration(since, now)), gif_id=baris_template.get("gif"))
+        await _remember_love_action(d, "partner", owner, sent)
+        await send_gif(bot, pid, "baris", f"🕊 Barıştınızzz! {names['address']} haber verdim 💕", partner_keyboard(False))
     elif text == partner.OZLEDIM:
         ozledim_template = template("ozledim")
-        await send_gif(bot, owner, "ozledim", ozledim_template.get("text") or f"🥺 {name} seni özledi!", gif_id=ozledim_template.get("gif"))
-        await bot.send_message(pid, "🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
+        sent = await send_gif(bot, owner, "ozledim", ozledim_template.get("text") or default_love_caption("partner", "ozledim", names["reference"]), gif_id=ozledim_template.get("gif"))
+        await _remember_love_action(d, "partner", owner, sent)
+        await bot.send_message(pid, f"🥺 {names['address']} ilettim.", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.SEVIYORUM:
         sev_template = template("seviyorum")
-        await send_gif(bot, owner, "seviyorum", sev_template.get("text") or f"❤️ {name} seni seviyor!", gif_id=sev_template.get("gif"))
-        await bot.send_message(pid, "❤️ Kayra'ya ilettim, eminim o da seni çok seviyor.💞", reply_markup=partner_keyboard(bool(state)))
+        sent = await send_gif(bot, owner, "seviyorum", sev_template.get("text") or default_love_caption("partner", "seviyorum", names["reference"]), gif_id=sev_template.get("gif"))
+        await _remember_love_action(d, "partner", owner, sent)
+        await bot.send_message(pid, f"❤️ {names['address']} ilettim, eminim o da seni çok seviyor.💞", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.MORAL:
         moral_template = template("moral")
         if moral_template.get("text") or moral_template.get("gif"):
-            await send_gif(bot, owner, "moral", moral_template.get("text") or f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", MORAL_BUTTON, moral_template.get("gif"))
+            sent = await send_gif(bot, owner, "moral", moral_template.get("text") or default_love_caption("partner", "moral", names["reference"]), MORAL_BUTTON, moral_template.get("gif"))
         else:
-            await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
-        await send_gif(bot, pid, "moral", "💕 Kayra'ya haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
+            sent = await bot.send_message(owner, default_love_caption("partner", "moral", names["reference"]), reply_markup=MORAL_BUTTON)
+        await _remember_love_action(d, "partner", owner, sent)
+        await send_gif(bot, pid, "moral", f"💕 {names['address']} haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
     else:
         await bot.send_message(pid, partner.guide(name, p["briefing_time"]), reply_markup=partner_keyboard(bool(state)))
 
@@ -674,14 +723,17 @@ async def owner_love_action(context, kind: str) -> None:
     if not p:
         await bot.send_message(owner, "Önce /davet ile sevgilini Saha'ya ekle.")
         return
+    names = await _love_names(d, "owner", p["name"], "Kayra")
     if kind == "kus":
         if await d["db"].get_kv("kus"):
             await bot.send_message(owner, "Şu an boykot sürüyor 😤")
             return
         await d["db"].set_kv("kus", {"since": datetime.now(d["cfg"].tz).isoformat()})
         schedule_kus(context.job_queue)
-        if await gif_to_partner(bot, d, "boykot", template.get("text") or "😤 Kayra seni boykot etti!", gif_id=template.get("gif")):
-            await bot.send_message(owner, "😤 Boykot başlatıldı.")
+        sent = await gif_to_partner(bot, d, "boykot", template.get("text") or default_love_caption("owner", "kus", names["reference"]), gif_id=template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
+            await bot.send_message(owner, f"😤 Boykot başladı; {names['address']} haberdar edildi.")
     elif kind == "baris":
         state = await d["db"].get_kv("kus")
         if not state:
@@ -691,23 +743,33 @@ async def owner_love_action(context, kind: str) -> None:
         stop_kus(context.job_queue)
         since = datetime.fromisoformat(state["since"])
         await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, datetime.now(d["cfg"].tz)))
-        if await gif_to_partner(bot, d, "baris", template.get("text") or "🕊 Kayra barıştığımızı söylüyor, barıştınız!", gif_id=template.get("gif")):
-            await bot.send_message(owner, "🕊 Barıştınız.")
+        sent = await gif_to_partner(bot, d, "baris", template.get("text") or default_love_caption("owner", "baris", names["reference"]), gif_id=template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
+            await bot.send_message(owner, f"🕊 Barıştınız; {names['address']} haber verildi.")
     elif kind == "gonul":
         if not await d["db"].get_kv("kus"):
             await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
             return
-        if await gif_to_partner(bot, d, "gonlunu_al", template.get("text") or "🥺 Kayra özür diliyor... Barışalım mı? Lütffeeeennn 🌹", BARIS_BUTTON, template.get("gif")):
+        sent = await gif_to_partner(bot, d, "gonlunu_al", template.get("text") or default_love_caption("owner", "gonul", names["reference"]), BARIS_BUTTON, template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
             await bot.send_message(owner, "🌹 Gönlünü almaya çalıştım, şimdi sıra onda 🤞")
     elif kind == "moral":
-        if await gif_to_partner(bot, d, "moral", template.get("text") or "💕 Kayra seni düşünüyor, her şey yoluna girecek 🌸", gif_id=template.get("gif")):
-            await bot.send_message(owner, "💌 Moral gönderildi.")
+        sent = await gif_to_partner(bot, d, "moral", template.get("text") or default_love_caption("owner", "moral", names["reference"]), gif_id=template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
+            await bot.send_message(owner, f"💌 Moral mesajı {names['address']} gönderildi.")
     elif kind == "ozledim":
-        if await gif_to_partner(bot, d, "ozledim", template.get("text") or "🥺 Kayra seni çookk özledi!", gif_id=template.get("gif")):
-            await bot.send_message(owner, "🥺 İlettim.")
+        sent = await gif_to_partner(bot, d, "ozledim", template.get("text") or default_love_caption("owner", "ozledim", names["reference"]), gif_id=template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
+            await bot.send_message(owner, f"🥺 Özlemin {names['address']} iletildi.")
     elif kind == "seviyorum":
-        if await gif_to_partner(bot, d, "seviyorum", template.get("text") or "❤️ Kayra seni seviyor! Dünyalar kadar!", gif_id=template.get("gif")):
-            await bot.send_message(owner, "❤️ İlettim.")
+        sent = await gif_to_partner(bot, d, "seviyorum", template.get("text") or default_love_caption("owner", "seviyorum", names["reference"]), gif_id=template.get("gif"))
+        if sent:
+            await _remember_love_action(d, "owner", p["id"], sent)
+            await bot.send_message(owner, f"❤️ Sevgin {names['address']} iletildi.")
 
 
 async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

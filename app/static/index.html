@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=7">
+  <link rel="stylesheet" href="/static/app.css?v=8">
 </head>
 <body>
   <main id="app">
@@ -234,6 +234,12 @@
           <button type="button" class="love-btn" data-act="seviyorum"><i>❤️</i>Seni seviyorum</button>
           <button type="button" class="love-btn" data-act="moral"><i>💌</i>Moral ver</button>
         </div>
+        <button type="button" class="btn love-undo" data-love-undo hidden>↩️ Son mesajı karşı taraftan sil</button>
+        <h2 class="group">Kişisel hitap</h2>
+        <div class="block">
+          <label class="row"><span>Ona nasıl hitap edersin?</span><input type="text" class="txt" id="p-nickname" maxlength="40" autocomplete="off" placeholder="Aşkım, bebeğim…"></label>
+          <p class="foot">Varsayılan bildirim ve onaylarda kullanılır. Örn. aşkım → “aşkına”; özel yazılarını değiştirmez.</p>
+        </div>
         <div class="block" id="love-lines-block" hidden><p class="love-lines" id="love-lines"></p></div>
 
         <h2 class="group">Boykot istatistikleri</h2>
@@ -278,6 +284,16 @@
         <p class="love-status" id="messages-status">Sevgine kendi yazını ve GIF'ini seç</p>
       </header>
       <div id="love-templates"></div>
+      <div class="block" id="template-preview" hidden aria-live="polite">
+        <div class="next">
+          <strong id="template-preview-title">Önizleme</strong>
+          <button type="button" class="btn" id="template-preview-close">Kapat</button>
+        </div>
+        <p class="item-sub" id="template-preview-nickname"></p>
+        <p class="preview-text" id="template-preview-text"></p>
+        <img class="preview-card" id="template-preview-gif" alt="Seçilen GIF" hidden>
+        <p class="item-sub" id="template-preview-note"></p>
+      </div>
       <p class="foot">Kaydettiğin yazı ve GIF, ilgili butona basıldığında gönderilecek.</p>
     </section>
 
@@ -305,6 +321,12 @@
         <button type="button" class="love-btn" data-act="ozledim"><i>🥺</i>Özledim</button>
         <button type="button" class="love-btn" data-act="seviyorum"><i>❤️</i>Seni seviyorum</button>
         <button type="button" class="love-btn" data-act="moral"><i>😔</i>Moralim bozuk</button>
+      </div>
+      <button type="button" class="btn love-undo" data-love-undo hidden>↩️ Son mesajı karşı taraftan sil</button>
+      <h2 class="group">Kişisel hitap</h2>
+      <div class="block">
+        <label class="row"><span>Kayra'ya nasıl hitap edersin?</span><input type="text" class="txt" id="me-nickname" maxlength="40" autocomplete="off" placeholder="Aşkım, bebeğim…"></label>
+        <p class="foot">Varsayılan bildirim ve onaylarda kullanılır. Örn. aşkım → “aşkına”; özel yazılarını değiştirmez.</p>
       </div>
       <h2 class="group">Özetlerin</h2>
       <div class="block">
@@ -346,6 +368,6 @@
   </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=16"></script>
 </body>
 </html>

@@ -22,6 +22,7 @@ KUS_LOG_MAX = 200
 
 DEFAULTS = {"briefing_time": "07:00", "evening_enabled": True, "news_topics": ["gundem", "yasam"]}
 SELF_KEYS = set(DEFAULTS)
+NICKNAME_MAX_LENGTH = 40
 
 
 def new_invite(now: datetime) -> dict:
@@ -62,6 +63,46 @@ def validate_owner(payload) -> dict:
     if not name or len(name) > 40:
         raise SettingsError("İsim 1-40 karakter olmalı")
     return {**value, "name": name}
+
+
+def validate_nickname(payload) -> str:
+    if not isinstance(payload, dict) or not isinstance(payload.get("nickname"), str):
+        raise SettingsError("Hitap bir metin olmalı")
+    nickname = payload["nickname"].strip()
+    if len(nickname) > NICKNAME_MAX_LENGTH:
+        raise SettingsError(f"Hitap en fazla {NICKNAME_MAX_LENGTH} karakter olabilir")
+    if any(ord(char) < 32 for char in nickname):
+        raise SettingsError("Hitap geçersiz karakter içeriyor")
+    return nickname
+
+
+def _last_vowel(text: str) -> str:
+    for char in reversed(text.lower()):
+        if char in "aıoueiöü":
+            return char
+    return ""
+
+
+def _dative_suffix(name: str) -> str:
+    suffix = "a" if _last_vowel(name) in "aıou" else "e"
+    connector = "y" if name[-1:].lower() in "aıoueiöü" else ""
+    return f"{connector}{suffix}"
+
+
+def dative_name(name: str) -> str:
+    return f"{name}'{_dative_suffix(name)}"
+
+
+def nickname_forms(nickname: str, fallback: str, sender: str | None = None) -> dict:
+    if not nickname:
+        return {"address": dative_name(fallback), "reference": sender or fallback}
+    lower = nickname.lower()
+    if lower.endswith(("ım", "im", "um", "üm")):
+        stem = nickname[:-1]
+        vowel = _last_vowel(stem)
+        suffix = "a" if vowel in "aıou" else "e"
+        return {"address": f"{stem}n{suffix}", "reference": f"{stem}n"}
+    return {"address": f"{nickname}{_dative_suffix(nickname)}", "reference": nickname}
 
 
 def is_quiet(now: datetime) -> bool:

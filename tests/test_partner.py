@@ -51,6 +51,13 @@ def test_validate_self():
         partner.validate_self({"briefing_time": "07:00", "evening_enabled": True, "news_topics": []})
 
 
+def test_nickname_forms():
+    assert partner.nickname_forms("Aşkım", "Kayra") == {"address": "Aşkına", "reference": "Aşkın"}
+    assert partner.nickname_forms("Bebeğim", "İlayda") == {"address": "Bebeğine", "reference": "Bebeğin"}
+    assert partner.nickname_forms("Minnoş", "Kayra") == {"address": "Minnoşa", "reference": "Minnoş"}
+    assert partner.nickname_forms("", "Kayra") == {"address": "Kayra'ya", "reference": "Kayra"}
+
+
 def test_love_lines():
     rows = [
         {"name": "Biz", "day": date(2026, 3, 13), "yearly": True, "counter": True},
@@ -302,7 +309,31 @@ async def test_owner_seviyorum_sends_gif_to_partner():
     await botmod.owner_love_action(ctx, "seviyorum")
     gif = _sent(ctx.bot.send_animation, 99)[-1]
     assert "seni seviyor" in gif.kwargs["caption"]
-    assert _sent(ctx.bot.send_message, 42)[-1].args[1] == "❤️ İlettim."
+    assert _sent(ctx.bot.send_message, 42)[-1].args[1] == "❤️ Sevgin İlayda'ya iletildi."
+
+
+async def test_owner_boykot_uses_custom_nickname():
+    ctx = _ctx(KV(love_nicknames={"owner": "Bebeğim"}))
+    await botmod.owner_love_action(ctx, "kus")
+    assert "Bebeğine haberdar edildi" in _sent(ctx.bot.send_message, 42)[-1].args[1]
+    assert "Bebeğin seni boykot etti" in _sent(ctx.bot.send_animation, 99)[-1].kwargs["caption"]
+
+
+async def test_partner_action_uses_custom_nickname():
+    ctx = _ctx(KV(love_nicknames={"partner": "Aşkım"}))
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(_upd(99, partner.OZLEDIM), ctx)
+    assert "Aşkına ilettim" in _sent(ctx.bot.send_message, 99)[-1].args[1]
+    assert "Aşkın seni özledi" in _sent(ctx.bot.send_animation, 42)[-1].kwargs["caption"]
+
+
+async def test_owner_action_records_the_message_sent_to_partner():
+    db = KV()
+    ctx = _ctx(db)
+    ctx.bot.send_animation.return_value = SimpleNamespace(message_id=501)
+    await botmod.owner_love_action(ctx, "kus")
+    assert db.values["love_undo"]["owner"]["chat_id"] == 99
+    assert db.values["love_undo"]["owner"]["message_id"] == 501
 
 
 def _cd_db(exams):

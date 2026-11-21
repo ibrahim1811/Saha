@@ -173,6 +173,66 @@ async def test_love_actions_from_panel(client):
     assert (await (await client.get("/api/love/state", headers=_auth(99))).json())["kus"] is False
 
 
+async def test_love_nicknames_are_private_to_each_role_and_personalize_actions(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+
+    owner = await (await client.get("/api/love/nickname", headers=_auth())).json()
+    partner_nickname = await (await client.get("/api/love/nickname", headers=_auth(99))).json()
+    assert owner["nickname"] == partner_nickname["nickname"] == ""
+
+    owner_saved = await client.put("/api/love/nickname", json={"nickname": "Bebeğim"}, headers=_auth())
+    partner_saved = await client.put("/api/love/nickname", json={"nickname": "Aşkım"}, headers=_auth(99))
+    assert owner_saved.status == partner_saved.status == 200
+    assert client.tg.bot_data["db"].kv["love_nicknames"] == {"owner": "Bebeğim", "partner": "Aşkım"}
+
+    owner_action = await (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())).json()
+    partner_state = await (await client.get("/api/love/state", headers=_auth(99))).json()
+    assert owner_action["recipient_address"] == "Bebeğine"
+    assert partner_state["recipient_address"] == "Aşkına"
+    owner_preview = await (await client.get("/api/love/templates", headers=_auth())).json()
+    partner_preview = await (await client.get("/api/love/templates", headers=_auth(99))).json()
+    assert next(a for a in owner_preview["actions"] if a["key"] == "seviyorum")["preview_text"].startswith("❤️ Bebeğin")
+    assert next(a for a in partner_preview["actions"] if a["key"] == "seviyorum")["preview_text"].startswith("❤️ Aşkın")
+
+    invalid = await client.put("/api/love/nickname", json={"nickname": "x" * 41}, headers=_auth())
+    assert invalid.status == 400
+
+
+async def test_last_love_message_can_be_deleted_from_recipient_chat(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    client.tg.bot.delete_message = AsyncMock()
+    sent_at = datetime.now(TZ).isoformat()
+    await client.tg.bot_data["db"].set_kv(
+        "love_undo",
+        {"owner": {"chat_id": PARTNER["id"], "message_id": 321, "sent_at": sent_at}},
+    )
+
+    state = await (await client.get("/api/love/state", headers=_auth())).json()
+    assert state["can_undo"] is True
+    response = await client.post("/api/love/undo", headers=_auth())
+    assert response.status == 200
+    client.tg.bot.delete_message.assert_awaited_once_with(PARTNER["id"], 321)
+    assert client.tg.bot_data["db"].kv["love_undo"] == {}
+
+    partner_state = await (await client.get("/api/love/state", headers=_auth(99))).json()
+    assert partner_state["can_undo"] is False
+
+
+async def test_love_undo_expires_after_48_hours(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    client.tg.bot.delete_message = AsyncMock()
+    sent_at = (datetime.now(TZ) - timedelta(hours=49)).isoformat()
+    await client.tg.bot_data["db"].set_kv(
+        "love_undo",
+        {"owner": {"chat_id": PARTNER["id"], "message_id": 321, "sent_at": sent_at}},
+    )
+    state = await (await client.get("/api/love/state", headers=_auth())).json()
+    assert state["can_undo"] is False
+    response = await client.post("/api/love/undo", headers=_auth())
+    assert response.status == 409
+    client.tg.bot.delete_message.assert_not_awaited()
+
+
 async def test_love_templates_are_separate_by_role(client):
     client.tg.bot_data["partner"] = dict(PARTNER)
     partner_data = await (await client.get("/api/love/templates", headers=_auth(99))).json()

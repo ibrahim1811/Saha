@@ -11,6 +11,7 @@ from aiohttp import web
 from dataclasses import asdict
 
 from datetime import date
+from telegram.error import TelegramError
 
 from app import bot, calendar_tr, card, daily_tasks, examcal, gifs, love, news, partner, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
@@ -24,7 +25,10 @@ DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
 EXAM_WINDOW_DAYS = 120
 TG_APP = web.AppKey("tg", object)
-PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action", "/api/love/templates", "/api/daily-tasks"}
+PARTNER_PATHS = {
+    "/api/me", "/api/partner/self", "/api/love/state", "/api/love/action",
+    "/api/love/nickname", "/api/love/undo", "/api/love/templates", "/api/daily-tasks",
+}
 PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "seviyorum": partner.SEVIYORUM, "moral": partner.MORAL}
 OWNER_ACTIONS = {"kus", "baris", "gonul", "ozledim", "seviyorum", "moral"}
 
@@ -437,16 +441,66 @@ async def post_invite(request):
     return _json({"link": f"https://t.me/{_tg(request).bot.username}?start={invite['code']}", "expires": invite["expires"]})
 
 
-async def _love_state(d) -> dict:
+async def _love_state(d, role: str) -> dict:
     kus = await d["db"].get_kv("kus")
     since = partner.duration(datetime.fromisoformat(kus["since"]), _now(d["cfg"].tz)) if kus else None
-    return {"kus": bool(kus), "kus_for": since}
+    p = d.get("partner") or {}
+    fallback = p.get("name", "Sevgilin") if role == "owner" else "Kayra"
+    nicknames = await d["db"].get_kv("love_nicknames") or {}
+    forms = partner.nickname_forms(nicknames.get(role, ""), fallback)
+    undo = (await d["db"].get_kv("love_undo") or {}).get(role)
+    can_undo = False
+    if undo and undo.get("chat_id") == (p.get("id") if role == "owner" else d["cfg"].owner_id):
+        sent_at = datetime.fromisoformat(undo["sent_at"])
+        age = _now(d["cfg"].tz) - sent_at
+        can_undo = timedelta(0) <= age < timedelta(hours=48)
+    return {
+        "kus": bool(kus),
+        "kus_for": since,
+        "recipient_address": forms["address"],
+        "can_undo": can_undo,
+    }
 
 
 async def get_love_state(request):
     d = _data(request)
     _partner_or_404(d)
-    return _json(await _love_state(d))
+    return _json(await _love_state(d, request["role"]))
+
+
+async def love_nickname(request):
+    d = _data(request)
+    _partner_or_404(d)
+    key = request["role"]
+    nicknames = await d["db"].get_kv("love_nicknames") or {}
+    if request.method == "PUT":
+        nickname = partner.validate_nickname(await _body(request))
+        nicknames[key] = nickname
+        await d["db"].set_kv("love_nicknames", nicknames)
+    return _json({"nickname": nicknames.get(key, "")})
+
+
+async def undo_love_action(request):
+    d = _data(request)
+    p = _partner_or_404(d)
+    role = request["role"]
+    actions = await d["db"].get_kv("love_undo") or {}
+    action = actions.get(role)
+    target_id = p["id"] if role == "owner" else d["cfg"].owner_id
+    if not action or action.get("chat_id") != target_id:
+        raise ApiError(409, "Geri alınabilecek bir mesaj yok")
+    sent_at = datetime.fromisoformat(action["sent_at"])
+    age = _now(d["cfg"].tz) - sent_at
+    if age < timedelta(0) or age >= timedelta(hours=48):
+        raise ApiError(409, "Mesajı geri alma süresi dolmuş")
+    try:
+        await _tg(request).bot.delete_message(target_id, action["message_id"])
+    except TelegramError as e:
+        log.warning("Karşı taraftaki mesaj silinemedi (%s): %r", role, e)
+        raise ApiError(409, "Mesaj karşı tarafın sohbetinden silinemedi") from e
+    actions.pop(role, None)
+    await d["db"].set_kv("love_undo", actions)
+    return _json(await _love_state(d, role))
 
 
 async def love_templates(request):
@@ -461,6 +515,10 @@ async def love_templates(request):
         key = "owner_love_templates"
         labels = {"kus": "Boykot başlat", "baris": "Barıştık", "gonul": "Gönlünü al", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moral ver"}
     stored = await d["db"].get_kv(key) or {}
+    nicknames = await d["db"].get_kv("love_nicknames") or {}
+    recipient_name = "Kayra" if request["role"] == "partner" else d["partner"]["name"]
+    sender_name = d["partner"]["name"] if request["role"] == "partner" else "Kayra"
+    names = partner.nickname_forms(nicknames.get(request["role"], ""), recipient_name, sender_name)
     gif_kinds = {
         "kus": "boykot",
         "baris": "baris",
@@ -490,7 +548,12 @@ async def love_templates(request):
     for kind in kinds:
         gif_kind = gif_kinds[kind]
         gif_options = [{"id": gif_id, "url": gifs.GIPHY.format(gif_id)} for gif_id in gifs.PACKS[gif_kind]]
-        actions.append({"key": kind, "label": labels[kind], "gifs": gif_options})
+        actions.append({
+            "key": kind,
+            "label": labels[kind],
+            "gifs": gif_options,
+            "preview_text": bot.default_love_caption(request["role"], kind, names["reference"]),
+        })
     return _json({"templates": stored, "actions": actions})
 
 
@@ -593,7 +656,7 @@ async def post_love_action(request):
         await bot.owner_love_action(ctx, action)
     else:
         raise ApiError(400, "Bilinmeyen işlem")
-    return _json(await _love_state(d))
+    return _json(await _love_state(d, request["role"]))
 
 
 async def post_love_note(request):
@@ -660,6 +723,9 @@ def build_web_app(tg_app) -> web.Application:
         web.post("/api/partner/invite", post_invite),
         web.get("/api/love/state", get_love_state),
         web.post("/api/love/action", post_love_action),
+        web.get("/api/love/nickname", love_nickname),
+        web.put("/api/love/nickname", love_nickname),
+        web.post("/api/love/undo", undo_love_action),
         web.get("/api/love/templates", love_templates),
         web.put("/api/love/templates", love_templates),
         web.get("/api/daily-tasks", daily_tasks_handler),

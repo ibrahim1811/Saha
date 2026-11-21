@@ -9,8 +9,8 @@
 
   const state = {
     view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null, showDone: false,
-    role: "owner", topics: [], briefing: null, love: null, pSaved: null, pDraft: null, meSaved: null, meDraft: null,
-    loveTemplates: null, loveTemplatesDraft: null,
+    role: "owner", topics: [], briefing: null, love: null, loveState: null, pSaved: null, pDraft: null, meSaved: null, meDraft: null,
+    loveTemplates: null, loveTemplatesDraft: null, nicknameSaved: "", nicknameDraft: "",
   };
   const KIND_ICON = { odev: "📝", sinav: "🧪" };
 
@@ -284,6 +284,7 @@
     $("love-name").textContent = "💕 " + data.partner.name;
     $("love-head").dataset.kus = !!data.kus;
     $("love-status").textContent = data.kus ? `😤 Boykot sürüyor, ${data.kus_for} oldu` : "Barışıksınız 🕊";
+    document.querySelector("#view-love [data-love-undo]").hidden = !state.loveState?.can_undo;
     $("love-main").querySelector('[data-act="gonul"]').hidden = !data.kus;
     $("love-main").querySelector('[data-act="kus"]').hidden = !!data.kus;
     $("love-main").querySelector('[data-act="baris"]').hidden = !data.kus;
@@ -302,13 +303,22 @@
     if (document.activeElement !== $("p-name")) $("p-name").value = d.name;
     $("p-time").value = d.briefing_time;
     $("p-evening").checked = d.evening_enabled;
+    if (document.activeElement !== $("p-nickname")) $("p-nickname").value = state.nicknameDraft;
     renderChips($("p-topics"), d.news_topics);
-    const dirty = JSON.stringify(d) !== JSON.stringify(state.pSaved);
+    const dirty = JSON.stringify(d) !== JSON.stringify(state.pSaved) || state.nicknameDraft !== state.nicknameSaved;
     setMainButton("Kaydet", dirty ? savePartner : null);
   }
 
   async function loadLove() {
-    state.love = await api("GET", "/api/partner");
+    const [love, nickname, loveState] = await Promise.all([
+      api("GET", "/api/partner"),
+      api("GET", "/api/love/nickname"),
+      api("GET", "/api/love/state"),
+    ]);
+    state.love = love;
+    state.loveState = loveState;
+    state.nicknameSaved = nickname.nickname;
+    state.nicknameDraft = nickname.nickname;
     if (state.love.partner) {
       state.pSaved = pick(state.love.partner);
       state.pDraft = pick(state.love.partner);
@@ -317,7 +327,13 @@
   }
 
   async function savePartner() {
-    state.love.partner = await api("PUT", "/api/partner", state.pDraft);
+    const [updated, nickname] = await Promise.all([
+      api("PUT", "/api/partner", state.pDraft),
+      api("PUT", "/api/love/nickname", { nickname: state.nicknameDraft }),
+    ]);
+    state.love.partner = updated;
+    state.nicknameSaved = nickname.nickname;
+    state.nicknameDraft = nickname.nickname;
     state.pSaved = pick(state.love.partner);
     state.pDraft = pick(state.love.partner);
     renderLove();
@@ -337,6 +353,7 @@
     const d = state.meDraft;
     $("me-time").value = d.briefing_time;
     $("me-evening").checked = d.evening_enabled;
+    if (document.activeElement !== $("me-nickname")) $("me-nickname").value = state.nicknameDraft;
     if (state.briefing) {
       document.querySelectorAll("[data-me-section]").forEach((el) => {
         el.checked = !!state.briefing.sections[el.dataset.meSection];
@@ -345,7 +362,7 @@
       $("me-news-count").textContent = state.briefing.news_count;
     }
     renderChips($("me-topics"), d.news_topics);
-    const dirty = JSON.stringify(d) !== JSON.stringify(state.meSaved);
+    const dirty = JSON.stringify(d) !== JSON.stringify(state.meSaved) || state.nicknameDraft !== state.nicknameSaved;
     setMainButton("Kaydet", dirty ? saveMe : null);
   }
 
@@ -355,10 +372,12 @@
     box.querySelector('[data-act="baris"]').hidden = !s.kus;
     box.querySelector(".love-head").dataset.kus = s.kus;
     $("me-status").textContent = s.kus ? `😤 Boykot sürüyor, ${s.kus_for} oldu` : "Saha sabahları ve gece 23:00'te sana özet getirir 🌸";
+    box.querySelector("[data-love-undo]").hidden = !s.can_undo;
+    state.loveState = s;
   }
 
   const ACTION_TOAST = {
-    kus: "😤 Boykot başladı, Kayra'ya alarm gitti",
+    kus: "😤 Boykot başladı.",
     baris: "🕊 Barıştınız!",
     ozledim: "🥺 İletildi",
     seviyorum: "❤️ Seni seviyorum iletildi",
@@ -373,7 +392,17 @@
     try {
       const s = await api("POST", "/api/love/action", { action: act });
       haptic("success");
-      toast(ACTION_TOAST[act]);
+      state.loveState = s;
+      const recipient = s.recipient_address || "sevgiline";
+      const personalizedToasts = {
+        kus: `😤 Boykot başladı; ${recipient} haber verildi.`,
+        baris: `🕊 Barıştınız; ${recipient} haberdar edildi.`,
+        ozledim: `🥺 Özlemin ${recipient} iletildi.`,
+        seviyorum: `❤️ Sevgin ${recipient} iletildi.`,
+        moral: `💕 Moral mesajı ${recipient} gönderildi.`,
+        gonul: `🌹 Özrün ${recipient} gönderildi.`,
+      };
+      toast(personalizedToasts[act] || ACTION_TOAST[act]);
       if (state.role === "partner") renderMeState(s);
       else await loadLove();
     } catch (err) {
@@ -383,9 +412,32 @@
     }
   }
 
+  async function undoLoveAction(button) {
+    button.disabled = true;
+    try {
+      const s = await api("POST", "/api/love/undo");
+      state.loveState = s;
+      if (state.role === "partner") renderMeState(s);
+      else await loadLove();
+      toast("Mesaj karşı tarafın sohbetinden silindi");
+    } catch (err) {
+      fail(err);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function loadMe() {
-    api("GET", "/api/love/state").then(renderMeState).catch(fail);
-    state.meSaved = await api("GET", "/api/partner/self");
+    const [loveState, me, nickname] = await Promise.all([
+      api("GET", "/api/love/state"),
+      api("GET", "/api/partner/self"),
+      api("GET", "/api/love/nickname"),
+    ]);
+    state.loveState = loveState;
+    renderMeState(loveState);
+    state.meSaved = me;
+    state.nicknameSaved = nickname.nickname;
+    state.nicknameDraft = nickname.nickname;
     state.meDraft = structuredClone(state.meSaved);
     renderMe();
   }
@@ -416,7 +468,8 @@
         <div class="block compose">
           <input type="text" class="txt" maxlength="500" data-template-gif-url="${esc(action.key)}" value="${esc(selected.gif && selected.gif.startsWith("http") ? selected.gif : "")}" placeholder="İstediğin GIF URL'si (https://...)">
         </div>
-        <div class="love-gifs">${gifs}</div>`;
+        <div class="love-gifs">${gifs}</div>
+        <button type="button" class="btn btn-wide" data-template-preview="${esc(action.key)}">Önizle</button>`;
     }).join("");
     const dirty = JSON.stringify(draft) !== JSON.stringify(state.loveTemplates.templates);
     setMainButton("Kaydet", dirty ? saveLoveTemplates : null);
@@ -428,6 +481,27 @@
     state.loveTemplatesDraft = structuredClone(result.templates);
     renderLoveTemplates();
     toast("Mesaj ve GIF seçenekleri kaydedildi");
+  }
+
+  function previewLoveTemplate(key) {
+    const action = state.loveTemplates.actions.find((row) => row.key === key);
+    const item = state.loveTemplatesDraft[key] || { text: "", gif: "" };
+    const selectedGif = item.gif || "";
+    const gif = selectedGif.startsWith("http")
+      ? selectedGif
+      : (action.gifs.find((row) => row.id === selectedGif) || action.gifs[0] || {}).url;
+    $("template-preview-title").textContent = `${action.label} · Önizleme`;
+    $("template-preview-nickname").textContent = state.nicknameDraft
+      ? `Hitap: ${state.nicknameDraft}`
+      : "Kişisel hitap ayarlanmamış.";
+    $("template-preview-text").textContent = (item.text || "").trim() || action.preview_text;
+    $("template-preview-gif").hidden = !gif;
+    $("template-preview-gif").src = gif || "";
+    $("template-preview-note").textContent = selectedGif
+      ? "Seçtiğin yazı ve GIF karşı tarafa gönderilir."
+      : "Özel GIF seçilmedi; gönderimde GIF havuzundan rastgele biri seçilir. Görsel örnek amaçlıdır.";
+    $("template-preview").hidden = false;
+    $("template-preview").scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   async function loadDailyTasks() {
@@ -489,7 +563,13 @@
   }
 
   async function saveMe() {
-    state.meSaved = await api("PUT", "/api/partner/self", state.meDraft);
+    const [me, nickname] = await Promise.all([
+      api("PUT", "/api/partner/self", state.meDraft),
+      api("PUT", "/api/love/nickname", { nickname: state.nicknameDraft }),
+    ]);
+    state.meSaved = me;
+    state.nicknameSaved = nickname.nickname;
+    state.nicknameDraft = nickname.nickname;
     state.meDraft = structuredClone(state.meSaved);
     renderMe();
     toast(`Kaydedildi. Özetin her gün ${state.meSaved.briefing_time}'da gelecek`);
@@ -732,6 +812,10 @@
       if (penalty) dailyTaskAction("penalty", penalty.dataset.dailyTarget, Number(penalty.dataset.dailyPenalty));
     });
     $("btn-preview").addEventListener("click", preview);
+    $("template-preview-close").addEventListener("click", () => {
+      $("template-preview").hidden = true;
+      $("template-preview-gif").removeAttribute("src");
+    });
     $("btn-send").addEventListener("click", sendNow);
     $("love-templates").addEventListener("input", (e) => {
       const key = e.target.dataset.templateText;
@@ -742,12 +826,20 @@
       setMainButton("Kaydet", saveLoveTemplates);
     });
     $("love-templates").addEventListener("click", (e) => {
+      const previewButton = e.target.closest("[data-template-preview]");
+      if (previewButton) {
+        previewLoveTemplate(previewButton.dataset.templatePreview);
+        return;
+      }
       const button = e.target.closest("[data-template-gif]");
       if (!button || !state.loveTemplatesDraft) return;
       const key = button.dataset.templateAction;
       const gif = button.dataset.templateGif;
       state.loveTemplatesDraft[key] = { ...(state.loveTemplatesDraft[key] || {}), gif: state.loveTemplatesDraft[key]?.gif === gif ? "" : gif };
       renderLoveTemplates();
+    });
+    document.querySelectorAll("[data-love-undo]").forEach((button) => {
+      button.addEventListener("click", () => undoLoveAction(button));
     });
 
     $("set-time").addEventListener("change", (e) => {
@@ -893,6 +985,10 @@
       state.pDraft.name = e.target.value.trim();
       renderLove();
     });
+    $("p-nickname").addEventListener("input", (e) => {
+      state.nicknameDraft = e.target.value;
+      renderLove();
+    });
     $("p-time").addEventListener("change", (e) => {
       if (e.target.value) state.pDraft.briefing_time = e.target.value;
       renderLove();
@@ -907,6 +1003,10 @@
     });
     $("me-evening").addEventListener("change", (e) => {
       state.meDraft.evening_enabled = e.target.checked;
+      renderMe();
+    });
+    $("me-nickname").addEventListener("input", (e) => {
+      state.nicknameDraft = e.target.value;
       renderMe();
     });
     $("btn-invite").addEventListener("click", () => createInvite().catch(fail));

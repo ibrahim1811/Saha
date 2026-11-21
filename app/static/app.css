@@ -223,6 +223,7 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
 .love-lines { white-space: pre-wrap; margin: 0; padding: 12px 0; }
 .row input.txt { border: 0; background: none; text-align: right; font-weight: 600; font-size: 16px; color: var(--accent); min-width: 0; width: 160px; }
 .love-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.love-undo { width: 100%; margin-top: 8px; }
 .love-btn {
   appearance: none; border: 0; border-radius: var(--radius); background: var(--surface); cursor: pointer;
   display: grid; justify-items: center; gap: 4px; padding: 16px 8px; font-weight: 600; font-size: 15px;
