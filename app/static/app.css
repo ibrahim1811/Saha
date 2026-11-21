@@ -261,10 +261,22 @@ main { padding: 0 16px calc(96px + env(safe-area-inset-bottom)); max-width: 560p
   appearance: none; border: 0; background: none; cursor: pointer; color: var(--hint);
   display: grid; justify-items: center; gap: 2px; font-size: 12px; font-weight: 500; padding: 4px 0;
 }
+.tabs button[hidden] { display: none; }
 .tabs[hidden] { display: none; }
-.tabs.partner { grid-template-columns: repeat(2, 1fr); }
+.tabs.partner { grid-template-columns: repeat(7, 1fr); }
 .tabs svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tabs button[aria-current="page"] { color: var(--accent); }
+
+.partner-mode .partner-detail,
+.partner-mode .guide { display: none; }
+.partner-mode #view-me { padding-bottom: 84px; }
+.partner-mode #view-me .love-actions { margin: 10px 0 6px; gap: 8px; }
+.partner-mode #view-me .love-btn { padding: 12px 8px; }
+.partner-mode #view-me .love-btn i { font-size: 27px; }
+.partner-mode #view-me .group { margin: 14px 4px 7px; }
+.partner-mode #view-me .love-head { padding-top: calc(16px + env(safe-area-inset-top)); padding-bottom: 16px; }
+.partner-mode #view-me .love-name { font-size: 28px; }
+.partner-mode #view-messages { padding-bottom: 84px; }
 
 .gate { min-height: 80vh; display: grid; place-content: center; text-align: center; padding: 24px; color: var(--hint); }
 .gate[hidden] { display: none; }

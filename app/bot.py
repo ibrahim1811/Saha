@@ -603,7 +603,26 @@ async def owner_love_action(context, kind: str) -> None:
     if not p:
         await bot.send_message(owner, "Önce /davet ile sevgilini Saha'ya ekle.")
         return
-    if kind == "gonul":
+    if kind == "kus":
+        if await d["db"].get_kv("kus"):
+            await bot.send_message(owner, "Şu an boykot sürüyor 😤")
+            return
+        await d["db"].set_kv("kus", {"since": datetime.now(d["cfg"].tz).isoformat()})
+        schedule_kus(context.job_queue)
+        if await gif_to_partner(bot, d, "boykot", template.get("text") or "😤 Kayra seni boykot etti!", gif_id=template.get("gif")):
+            await bot.send_message(owner, "😤 Boykot başlatıldı.")
+    elif kind == "baris":
+        state = await d["db"].get_kv("kus")
+        if not state:
+            await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
+            return
+        await d["db"].delete_kv("kus")
+        stop_kus(context.job_queue)
+        since = datetime.fromisoformat(state["since"])
+        await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, datetime.now(d["cfg"].tz)))
+        if await gif_to_partner(bot, d, "baris", template.get("text") or "🕊 Kayra barıştığımızı söylüyor, barıştınız!", gif_id=template.get("gif")):
+            await bot.send_message(owner, "🕊 Barıştınız.")
+    elif kind == "gonul":
         if not await d["db"].get_kv("kus"):
             await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
             return

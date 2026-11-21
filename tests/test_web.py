@@ -165,7 +165,7 @@ async def test_love_actions_from_panel(client):
     assert (await client.post("/api/love/action", json={"action": "seviyorum"}, headers=_auth())).status == 200
     assert client.tg.bot.send_animation.await_args.args[0] == 99
     assert (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth(99))).status == 400
-    assert (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())).status == 400
+    assert (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())).status == 200
     s = await (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth())).json()
     assert client.tg.bot.send_animation.await_args.args[0] == 99
     s = await (await client.post("/api/love/action", json={"action": "baris"}, headers=_auth(99))).json()
@@ -186,6 +186,18 @@ async def test_love_templates_are_separate_by_role(client):
     owner_data = await (await client.get("/api/love/templates", headers=_auth())).json()
     assert "seviyorum" in [a["key"] for a in owner_data["actions"]]
     assert "owner_love_templates" not in client.tg.bot_data["db"].kv
+
+
+async def test_custom_gif_url_and_owner_kus(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    payload = {"kus": {"text": "Boykot başladı!", "gif": "https://example.com/ozel.gif"}}
+    res = await client.put("/api/love/templates", json=payload, headers=_auth())
+    assert res.status == 200
+
+    client.tg.bot.send_animation = AsyncMock()
+    result = await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())
+    assert result.status == 200
+    assert client.tg.bot.send_animation.await_args.args[1] == "https://example.com/ozel.gif"
 
 
 async def test_owner_partner_panel(client):

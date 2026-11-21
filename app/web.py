@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +26,7 @@ EXAM_WINDOW_DAYS = 120
 TG_APP = web.AppKey("tg", object)
 PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action", "/api/love/templates"}
 PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "seviyorum": partner.SEVIYORUM, "moral": partner.MORAL}
-OWNER_ACTIONS = {"gonul", "ozledim", "seviyorum", "moral"}
+OWNER_ACTIONS = {"kus", "baris", "gonul", "ozledim", "seviyorum", "moral"}
 
 
 class ApiError(Exception):
@@ -456,9 +457,9 @@ async def love_templates(request):
         key = "partner_love_templates"
         labels = {"kus": "Boykot başlasın", "baris": "Barıştık", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moralim bozuk"}
     else:
-        kinds = ("gonul", "ozledim", "seviyorum", "moral")
+        kinds = ("kus", "baris", "gonul", "ozledim", "seviyorum", "moral")
         key = "owner_love_templates"
-        labels = {"gonul": "Gönlünü al", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moral ver"}
+        labels = {"kus": "Boykot başlat", "baris": "Barıştık", "gonul": "Gönlünü al", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moral ver"}
     stored = await d["db"].get_kv(key) or {}
     gif_kinds = {
         "kus": "boykot",
@@ -478,8 +479,10 @@ async def love_templates(request):
             text = str(item.get("text", "")).strip()[:500]
             gif_id = str(item.get("gif", "")).strip()
             gif_kind = gif_kinds[kind]
-            if gif_id and gif_id not in gifs.PACKS[gif_kind]:
-                raise ApiError(400, "Geçersiz GIF")
+            if gif_id and not gif_id.lower().startswith(("http://", "https://")) and gif_id not in gifs.PACKS[gif_kind]:
+                # Allow Giphy media IDs as well as direct URLs.
+                if not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", gif_id):
+                    raise ApiError(400, "Geçersiz GIF")
             result[kind] = {"text": text, "gif": gif_id}
         await d["db"].set_kv(key, result)
         stored = result

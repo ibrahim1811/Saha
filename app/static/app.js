@@ -90,6 +90,9 @@
   }
 
   function showView(name) {
+    if (state.role === "partner") {
+      name = name === "messages" ? "messages" : "me";
+    }
     state.view = name;
     document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
     document.querySelectorAll(".tabs button").forEach((b) => {
@@ -281,6 +284,8 @@
     $("love-head").dataset.kus = !!data.kus;
     $("love-status").textContent = data.kus ? `😤 Boykot sürüyor, ${data.kus_for} oldu` : "Barışıksınız 🕊";
     $("love-main").querySelector('[data-act="gonul"]').hidden = !data.kus;
+    $("love-main").querySelector('[data-act="kus"]').hidden = !!data.kus;
+    $("love-main").querySelector('[data-act="baris"]').hidden = !data.kus;
     $("love-lines-block").hidden = !data.lines.length;
     $("love-lines").textContent = data.lines.join("\n");
     const st = data.stats;
@@ -406,6 +411,9 @@
       return `<h2 class="group">${esc(action.label)}</h2>
         <div class="block compose">
           <input type="text" class="txt" maxlength="500" data-template-text="${esc(action.key)}" value="${esc(selected.text)}" placeholder="Özel yazı (boş bırakılırsa varsayılan)">
+        </div>
+        <div class="block compose">
+          <input type="text" class="txt" maxlength="500" data-template-gif-url="${esc(action.key)}" value="${esc(selected.gif && selected.gif.startsWith("http") ? selected.gif : "")}" placeholder="İstediğin GIF URL'si (https://...)">
         </div>
         <div class="love-gifs">${gifs}</div>`;
     }).join("");
@@ -662,8 +670,10 @@
     $("btn-send").addEventListener("click", sendNow);
     $("love-templates").addEventListener("input", (e) => {
       const key = e.target.dataset.templateText;
-      if (!key || !state.loveTemplatesDraft) return;
-      state.loveTemplatesDraft[key] = { ...(state.loveTemplatesDraft[key] || {}), text: e.target.value };
+      const gifKey = e.target.dataset.templateGifUrl;
+      if (!state.loveTemplatesDraft) return;
+      if (key) state.loveTemplatesDraft[key] = { ...(state.loveTemplatesDraft[key] || {}), text: e.target.value };
+      if (gifKey) state.loveTemplatesDraft[gifKey] = { ...(state.loveTemplatesDraft[gifKey] || {}), gif: e.target.value.trim() };
       setMainButton("Kaydet", saveLoveTemplates);
     });
     $("love-templates").addEventListener("click", (e) => {
@@ -995,12 +1005,9 @@
         state.topics = me.topics;
         if (me.role === "partner") {
           state.briefing = me.briefing;
+          document.body.classList.add("partner-mode");
           $("tabs").hidden = false;
           $("tabs").classList.add("partner");
-          document.querySelectorAll(".tabs button").forEach((button) => {
-            button.hidden = !["me", "messages"].includes(button.dataset.view);
-          });
-          $("partner-me-tab").hidden = false;
           $("me-name").textContent = `Merhaba ${me.name} 🌸`;
           showView("me");
           return;
