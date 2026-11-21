@@ -126,6 +126,7 @@ async def status(request):
         "uptime_s": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
         "next_briefing": jobs[0].next_t if jobs and getattr(jobs[0], "next_t", None) else None,
         "errors": errors_buf.records() if errors_buf else [],
+        "partner_sends": await d["db"].get_kv("partner_sends") or [],
         "settings": await bot.load_settings(d),
         "reminder_count": len(pending),
     })

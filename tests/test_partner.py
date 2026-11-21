@@ -228,3 +228,33 @@ async def test_unreachable_partner_warns_owner():
     ctx.bot.send_message = AsyncMock(side_effect=[Exception("Forbidden"), None])
     assert await botmod.notify_partner(ctx.bot, ctx.bot_data, "x") is False
     assert "ulaşılamadı" in ctx.bot.send_message.await_args.args[1]
+
+
+async def test_partner_send_log_records_success_and_failure(monkeypatch):
+    db = KV()
+    ctx = _ctx(db)
+    brief = SimpleNamespace(weather=None, text="x", text_without_weather="x")
+
+    async def fake_build(bot_data, p, today, evening=False):
+        return brief, {"photo_card": False}
+
+    monkeypatch.setattr(botmod, "build_partner_briefing", fake_build)
+    monkeypatch.setattr(botmod, "send_gif", AsyncMock())
+    monkeypatch.setattr(botmod, "deliver_briefing", AsyncMock())
+
+    await botmod.send_partner_briefing(ctx, evening=True)
+    assert db.values["partner_sends"][0]["ok"] is True
+    assert db.values["partner_sends"][0]["kind"] == "aksam"
+
+    monkeypatch.setattr(botmod, "deliver_briefing", AsyncMock(side_effect=Exception("boom")))
+    await botmod.send_partner_briefing(ctx, evening=True)
+    assert db.values["partner_sends"][0]["ok"] is False
+    assert "boom" in db.values["partner_sends"][0]["error"]
+
+
+async def test_partner_send_log_caps_entries(monkeypatch):
+    db = KV()
+    ctx = _ctx(db)
+    for _ in range(botmod.PARTNER_SEND_LOG_MAX + 5):
+        await botmod.log_partner_send(ctx.bot_data, "sabah", True)
+    assert len(db.values["partner_sends"]) == botmod.PARTNER_SEND_LOG_MAX

@@ -17,6 +17,7 @@ CACHE_TTL = 900
 RAIN_PROB_THRESHOLD = 40
 SHOWER_PROB_THRESHOLD = 70
 _CACHE: dict[tuple, tuple[float, "DayWeather"]] = {}
+_LOCKS: dict[tuple, asyncio.Lock] = {}
 
 CONDITION_TR = {
     "clear": "Açık",
@@ -181,16 +182,18 @@ async def fetch(lat: float, lon: float, tz_name: str, http: httpx.AsyncClient, d
     today = _today(ZoneInfo(tz_name))
     day = day or today
     key = (round(lat, 2), round(lon, 2), day)
-    cached = _CACHE.get(key)
-    if cached and time.monotonic() - cached[0] < CACHE_TTL:
-        return cached[1]
-    try:
-        w = await _openmeteo(lat, lon, tz_name, http, (day - today).days)
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
-        log.warning("Open-Meteo başarısız (%r), MET Norway deneniyor", e)
-        w = await _metno(lat, lon, tz_name, http, day)
-    _CACHE[key] = (time.monotonic(), w)
-    return w
+    lock = _LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        cached = _CACHE.get(key)
+        if cached and time.monotonic() - cached[0] < CACHE_TTL:
+            return cached[1]
+        try:
+            w = await _openmeteo(lat, lon, tz_name, http, (day - today).days)
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+            log.warning("Open-Meteo başarısız (%r), MET Norway deneniyor", e)
+            w = await _metno(lat, lon, tz_name, http, day)
+        _CACHE[key] = (time.monotonic(), w)
+        return w
 
 
 def summary(w: DayWeather) -> str:

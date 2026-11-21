@@ -84,6 +84,7 @@ GONUL_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("🌹 Gönlünü al",
 MORAL_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("💌 Moral ver", callback_data="love:moral")]])
 BARIS_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("🕊 Barıştık", callback_data="love:baris")]])
 PARTNER_NEWS_COUNT = 5
+PARTNER_SEND_LOG_MAX = 20
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
@@ -266,13 +267,31 @@ async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = N
     await deliver_briefing(context.bot, d["cfg"].owner_id, result, s, today)
 
 
+async def log_partner_send(d, kind: str, ok: bool, error: str = "") -> None:
+    items = await d["db"].get_kv("partner_sends") or []
+    items.insert(0, {
+        "time": datetime.now(d["cfg"].tz).isoformat(),
+        "kind": kind,
+        "ok": ok,
+        "error": error[:300],
+    })
+    await d["db"].set_kv("partner_sends", items[:PARTNER_SEND_LOG_MAX])
+
+
 async def send_partner_briefing(context, day: date | None = None, evening: bool = False) -> None:
     d = _deps(context)
     p = d.get("partner")
     if not p:
         return
+    kind = "aksam" if evening else "sabah"
     today = day or _now(context).date()
-    result, s = await build_partner_briefing(d, p, today, evening=evening)
+    try:
+        result, s = await build_partner_briefing(d, p, today, evening=evening)
+    except Exception as e:
+        log.warning("Partner özeti hazırlanamadı: %r", e)
+        await log_partner_send(d, kind, False, f"hazırlık: {e!r}")
+        await context.bot.send_message(d["cfg"].owner_id, f"⚠️ {p['name']} için özet hazırlanamadı: {e!r}"[:300])
+        return
     note = None
     if not evening:
         pending = await d["db"].pending_love_notes()
@@ -283,8 +302,10 @@ async def send_partner_briefing(context, day: date | None = None, evening: bool 
         await deliver_briefing(context.bot, p["id"], result, s, today, suffix)
     except Exception as e:
         log.warning("Partner özeti gönderilemedi: %r", e)
+        await log_partner_send(d, kind, False, repr(e))
         await context.bot.send_message(d["cfg"].owner_id, unreachable(p))
         return
+    await log_partner_send(d, kind, True)
     if note:
         await d["db"].mark_love_note_delivered(note["id"])
 
