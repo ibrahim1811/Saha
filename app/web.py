@@ -11,7 +11,7 @@ from dataclasses import asdict
 
 from datetime import date
 
-from app import bot, calendar_tr, card, examcal, love, news, partner, reminders, schedule, school, settings, tasks, weather
+from app import bot, calendar_tr, card, examcal, gifs, love, news, partner, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
@@ -23,9 +23,9 @@ DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
 EXAM_WINDOW_DAYS = 120
 TG_APP = web.AppKey("tg", object)
-PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action"}
-PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "moral": partner.MORAL}
-OWNER_ACTIONS = {"gonul", "ozledim", "moral"}
+PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action", "/api/love/templates"}
+PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "seviyorum": partner.SEVIYORUM, "moral": partner.MORAL}
+OWNER_ACTIONS = {"gonul", "ozledim", "seviyorum", "moral"}
 
 
 class ApiError(Exception):
@@ -357,7 +357,11 @@ async def preview(request):
 
 async def send_now(request):
     tg = _tg(request)
-    await bot.send_briefing(SimpleNamespace(bot=tg.bot, bot_data=tg.bot_data), await _next_day(tg.bot_data))
+    context = SimpleNamespace(bot=tg.bot, bot_data=tg.bot_data)
+    today = await _next_day(tg.bot_data)
+    await bot.send_briefing(context, today)
+    if tg.bot_data.get("partner"):
+        await bot.send_partner_briefing(context, today)
     return _json({"ok": True})
 
 
@@ -372,7 +376,16 @@ async def me(request):
     d = _data(request)
     p = d.get("partner")
     name = p["name"] if request["role"] == "partner" else "Kayra"
-    return _json({"role": request["role"], "name": name, "topics": news.CATALOG})
+    result = {"role": request["role"], "name": name, "topics": news.CATALOG}
+    if request["role"] == "partner":
+        owner_settings = await bot.load_settings(d)
+        result["briefing"] = {
+            "sections": owner_settings["sections"],
+            "photo_card": owner_settings["photo_card"],
+            "news_count": bot.PARTNER_NEWS_COUNT,
+            "evening_time": partner.EVENING_TIME,
+        }
+    return _json(result)
 
 
 async def get_partner_self(request):
@@ -433,6 +446,49 @@ async def get_love_state(request):
     d = _data(request)
     _partner_or_404(d)
     return _json(await _love_state(d))
+
+
+async def love_templates(request):
+    d = _data(request)
+    _partner_or_404(d)
+    if request["role"] == "partner":
+        kinds = ("kus", "baris", "ozledim", "seviyorum", "moral")
+        key = "partner_love_templates"
+        labels = {"kus": "Boykot başlasın", "baris": "Barıştık", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moralim bozuk"}
+    else:
+        kinds = ("gonul", "ozledim", "seviyorum", "moral")
+        key = "owner_love_templates"
+        labels = {"gonul": "Gönlünü al", "ozledim": "Özledim", "seviyorum": "Seni seviyorum", "moral": "Moral ver"}
+    stored = await d["db"].get_kv(key) or {}
+    gif_kinds = {
+        "kus": "boykot",
+        "baris": "baris",
+        "gonul": "gonlunu_al",
+        "ozledim": "ozledim",
+        "seviyorum": "seviyorum",
+        "moral": "moral",
+    }
+    if request.method == "PUT":
+        body = await _body(request)
+        result = {}
+        for kind in kinds:
+            item = body.get(kind)
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "")).strip()[:500]
+            gif_id = str(item.get("gif", "")).strip()
+            gif_kind = gif_kinds[kind]
+            if gif_id and gif_id not in gifs.PACKS[gif_kind]:
+                raise ApiError(400, "Geçersiz GIF")
+            result[kind] = {"text": text, "gif": gif_id}
+        await d["db"].set_kv(key, result)
+        stored = result
+    actions = []
+    for kind in kinds:
+        gif_kind = gif_kinds[kind]
+        gif_options = [{"id": gif_id, "url": gifs.GIPHY.format(gif_id)} for gif_id in gifs.PACKS[gif_kind]]
+        actions.append({"key": kind, "label": labels[kind], "gifs": gif_options})
+    return _json({"templates": stored, "actions": actions})
 
 
 async def post_love_action(request):
@@ -513,6 +569,8 @@ def build_web_app(tg_app) -> web.Application:
         web.post("/api/partner/invite", post_invite),
         web.get("/api/love/state", get_love_state),
         web.post("/api/love/action", post_love_action),
+        web.get("/api/love/templates", love_templates),
+        web.put("/api/love/templates", love_templates),
         web.post("/api/love-notes", post_love_note),
         web.delete("/api/love-notes/{id}", _deleter("delete_love_note", "Not")),
         web.post("/api/special-days", post_special_day),

@@ -11,7 +11,7 @@ KUS_INTERVAL_SECONDS = 3600
 EVENING_TIME = "23:00"
 
 KUS = "😤 Boykot başlasın!!"
-KUS_ALIASES = {KUS, "😤 Küstümmm"}
+KUS_ALIASES = {KUS, "😤 Küstüm", "😤 Küstümmm"}
 BARIS = "🕊 Barıştık, Yaşasınnnn!!"
 OZLEDIM = "🥺 Özledimmm"
 MORAL = "😔 Moralim bozuk"

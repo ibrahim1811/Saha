@@ -9,7 +9,8 @@
 
   const state = {
     view: "today", settings: null, settingsDraft: null, schedules: null, kind: "okul", day: "pazartesi", lessonsDraft: null, saveFn: null, showDone: false,
-    role: "owner", topics: [], love: null, pSaved: null, pDraft: null, meSaved: null, meDraft: null,
+    role: "owner", topics: [], briefing: null, love: null, pSaved: null, pDraft: null, meSaved: null, meDraft: null,
+    loveTemplates: null, loveTemplatesDraft: null,
   };
   const KIND_ICON = { odev: "📝", sinav: "🧪" };
 
@@ -104,6 +105,7 @@
     if (name === "school") loadSchool().catch(fail);
     if (name === "love") loadLove().catch(fail);
     if (name === "me") loadMe().catch(fail);
+    if (name === "messages") loadLoveTemplates().catch(fail);
   }
 
   function skyLine(hourly) {
@@ -329,6 +331,13 @@
     const d = state.meDraft;
     $("me-time").value = d.briefing_time;
     $("me-evening").checked = d.evening_enabled;
+    if (state.briefing) {
+      document.querySelectorAll("[data-me-section]").forEach((el) => {
+        el.checked = !!state.briefing.sections[el.dataset.meSection];
+      });
+      $("me-photo").checked = !!state.briefing.photo_card;
+      $("me-news-count").textContent = state.briefing.news_count;
+    }
     renderChips($("me-topics"), d.news_topics);
     const dirty = JSON.stringify(d) !== JSON.stringify(state.meSaved);
     setMainButton("Kaydet", dirty ? saveMe : null);
@@ -346,6 +355,7 @@
     kus: "😤 Boykot başladı, Kayra'ya alarm gitti",
     baris: "🕊 Barıştınız!",
     ozledim: "🥺 İletildi",
+    seviyorum: "❤️ Seni seviyorum iletildi",
     moral: "💕 Haber verildi",
     gonul: "🌹 Özür gitti, şimdi sıra onda 🤞",
   };
@@ -372,6 +382,43 @@
     state.meSaved = await api("GET", "/api/partner/self");
     state.meDraft = structuredClone(state.meSaved);
     renderMe();
+  }
+
+  async function loadLoveTemplates() {
+    const data = await api("GET", "/api/love/templates");
+    state.loveTemplates = structuredClone(data);
+    state.loveTemplatesDraft = structuredClone(data.templates);
+    renderLoveTemplates();
+  }
+
+  function renderLoveTemplates() {
+    const data = state.loveTemplates;
+    const draft = state.loveTemplatesDraft;
+    $("messages-title").textContent = state.role === "partner" ? "💕 Kayra’ya mesajların" : "💕 Partnerime mesajlarım";
+    $("messages-status").textContent = state.role === "partner" ? "Partner’e değil, Kayra’ya gönderilecek yazı ve GIF’leri özelleştir" : "Partnerime gönderilecek yazı ve GIF’leri özelleştir";
+    $("love-templates").innerHTML = data.actions.map((action) => {
+      const selected = draft[action.key] || { text: "", gif: "" };
+      const gifs = action.gifs.map((gif) =>
+        `<button type="button" class="love-gif ${selected.gif === gif.id ? "selected" : ""}" data-template-action="${esc(action.key)}" data-template-gif="${esc(gif.id)}" aria-label="${esc(action.label)} GIF seç">
+          <img src="${esc(gif.url)}" alt="">
+        </button>`
+      ).join("");
+      return `<h2 class="group">${esc(action.label)}</h2>
+        <div class="block compose">
+          <input type="text" class="txt" maxlength="500" data-template-text="${esc(action.key)}" value="${esc(selected.text)}" placeholder="Özel yazı (boş bırakılırsa varsayılan)">
+        </div>
+        <div class="love-gifs">${gifs}</div>`;
+    }).join("");
+    const dirty = JSON.stringify(draft) !== JSON.stringify(state.loveTemplates.templates);
+    setMainButton("Kaydet", dirty ? saveLoveTemplates : null);
+  }
+
+  async function saveLoveTemplates() {
+    const result = await api("PUT", "/api/love/templates", state.loveTemplatesDraft);
+    state.loveTemplates = result;
+    state.loveTemplatesDraft = structuredClone(result.templates);
+    renderLoveTemplates();
+    toast("Mesaj ve GIF seçenekleri kaydedildi");
   }
 
   async function saveMe() {
@@ -613,6 +660,20 @@
     document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
     $("btn-preview").addEventListener("click", preview);
     $("btn-send").addEventListener("click", sendNow);
+    $("love-templates").addEventListener("input", (e) => {
+      const key = e.target.dataset.templateText;
+      if (!key || !state.loveTemplatesDraft) return;
+      state.loveTemplatesDraft[key] = { ...(state.loveTemplatesDraft[key] || {}), text: e.target.value };
+      setMainButton("Kaydet", saveLoveTemplates);
+    });
+    $("love-templates").addEventListener("click", (e) => {
+      const button = e.target.closest("[data-template-gif]");
+      if (!button || !state.loveTemplatesDraft) return;
+      const key = button.dataset.templateAction;
+      const gif = button.dataset.templateGif;
+      state.loveTemplatesDraft[key] = { ...(state.loveTemplatesDraft[key] || {}), gif: state.loveTemplatesDraft[key]?.gif === gif ? "" : gif };
+      renderLoveTemplates();
+    });
 
     $("set-time").addEventListener("change", (e) => {
       if (e.target.value) state.settingsDraft.briefing_time = e.target.value;
@@ -933,7 +994,13 @@
         state.role = me.role;
         state.topics = me.topics;
         if (me.role === "partner") {
-          $("tabs").hidden = true;
+          state.briefing = me.briefing;
+          $("tabs").hidden = false;
+          $("tabs").classList.add("partner");
+          document.querySelectorAll(".tabs button").forEach((button) => {
+            button.hidden = !["me", "messages"].includes(button.dataset.view);
+          });
+          $("partner-me-tab").hidden = false;
           $("me-name").textContent = `Merhaba ${me.name} 🌸`;
           showView("me");
           return;

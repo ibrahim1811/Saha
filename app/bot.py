@@ -1,3 +1,4 @@
+import copy
 import logging
 import re
 from datetime import date, datetime, time, timedelta
@@ -179,7 +180,10 @@ async def setup_partner_menu(bot, d) -> None:
 
 
 async def load_settings(bot_data) -> dict:
-    return settings.merge(await bot_data["db"].get_settings(), bot_data["cfg"].briefing_time.strftime("%H:%M"))
+    db = bot_data["db"]
+    stored = await db.get_settings() if hasattr(db, "get_settings") else await db.get_kv("main")
+    base_time = getattr(bot_data["cfg"], "briefing_time", time(7, 0))
+    return settings.merge(stored, base_time.strftime("%H:%M"))
 
 
 def reschedule_briefing(job_queue, time_str: str, tz: ZoneInfo) -> None:
@@ -222,13 +226,12 @@ async def build_briefing(bot_data, today, evening: bool = False) -> tuple[briefi
     return await briefing.build(today, src, s, evening=evening, from_hour=from_hour, top_lines=top), s
 
 
-def partner_briefing_settings(p: dict) -> dict:
-    return {
-        "sections": {"weather": True, "lessons": True, "tasks": True, "news": True},
-        "news_count": PARTNER_NEWS_COUNT,
-        "news_topics": p["news_topics"],
-        "photo_card": True,
-    }
+def partner_briefing_settings(p: dict, owner_settings: dict | None = None) -> dict:
+    s = copy.deepcopy(owner_settings) if owner_settings else copy.deepcopy(settings.DEFAULTS)
+    s["news_count"] = PARTNER_NEWS_COUNT
+    s["news_topics"] = p["news_topics"]
+    s["photo_card"] = True
+    return s
 
 
 async def countdown_lines(bot_data, today: date) -> list[str]:
@@ -244,7 +247,7 @@ async def countdown_lines(bot_data, today: date) -> list[str]:
 
 async def build_partner_briefing(bot_data, p: dict, today: date, evening: bool = False) -> tuple[briefing.Briefing, dict]:
     cfg = bot_data["cfg"]
-    s = partner_briefing_settings(p)
+    s = partner_briefing_settings(p, await load_settings(bot_data))
     now = datetime.now(cfg.tz)
     from_hour = now.hour if today == now.date() else 0
     src = briefing.make_sources(cfg, bot_data["db"], bot_data["llm"], bot_data["http"], today, s, now.date(), school_only=True)
@@ -503,9 +506,9 @@ async def claim_invite(update, context) -> bool:
     return True
 
 
-async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, reply_markup=None) -> None:
+async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None) -> None:
     try:
-        await bot.send_animation(chat_id, gifs.pick(kind), caption=caption, reply_markup=reply_markup)
+        await bot.send_animation(chat_id, gifs.pick_selected(kind, gif_id), caption=caption, reply_markup=reply_markup)
     except TimedOut:
         log.warning("GIF zaman aşımına uğradı (%s), büyük ihtimalle ulaştı", kind)
     except Exception as e:
@@ -514,12 +517,12 @@ async def send_gif(bot, chat_id: int, kind: str, caption: str | None = None, rep
             await bot.send_message(chat_id, caption, reply_markup=reply_markup)
 
 
-async def gif_to_partner(bot, d, kind: str, caption: str | None = None, reply_markup=None) -> bool:
+async def gif_to_partner(bot, d, kind: str, caption: str | None = None, reply_markup=None, gif_id: str | None = None) -> bool:
     p = d.get("partner")
     if not p:
         return False
     try:
-        await send_gif(bot, p["id"], kind, caption, reply_markup)
+        await send_gif(bot, p["id"], kind, caption, reply_markup, gif_id)
     except Exception as e:
         log.warning("Partnere GIF gönderilemedi: %r", e)
         await bot.send_message(d["cfg"].owner_id, unreachable(p))
@@ -550,13 +553,17 @@ async def partner_action(context, d, text: str) -> None:
     bot, p, owner, now = context.bot, d["partner"], d["cfg"].owner_id, _now(context)
     pid, name = p["id"], p["name"]
     state = await d["db"].get_kv("kus")
+    templates = await d["db"].get_kv("partner_love_templates") or {}
+    template = lambda kind: templates.get(kind, {})
     if text in partner.KUS_ALIASES:
         if state:
             await bot.send_message(pid, f"Boykot zaten sürüyor 😤 Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
             return
         await d["db"].set_kv("kus", {"since": now.isoformat()})
         schedule_kus(context.job_queue)
-        await send_gif(bot, owner, "boykot", f"🚨 BOYKOT BAŞLADI! {name} seni boykot ediyor. Hemen gönlünü al 🌹", GONUL_BUTTON)
+        kus_template = template("kus")
+        kus_text = kus_template.get("text") or f"🚨 BOYKOT BAŞLADI! {name} seni boykot ediyor. Hemen gönlünü al 🌹"
+        await send_gif(bot, owner, "boykot", kus_text, GONUL_BUTTON, kus_template.get("gif"))
         await bot.send_message(pid, f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas. Ama o seni çok seviyor bunu asla unutmaaa.", reply_markup=partner_keyboard(True))
     elif text == partner.BARIS:
         if not state:
@@ -566,16 +573,23 @@ async def partner_action(context, d, text: str) -> None:
         stop_kus(context.job_queue)
         since = datetime.fromisoformat(state["since"])
         await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, now))
-        await send_gif(bot, owner, "baris", f"🕊 {name} boykotu bitirdi, barıştınız! Boykot {partner.duration(since, now)} sürdü.")
+        baris_template = template("baris")
+        await send_gif(bot, owner, "baris", baris_template.get("text") or f"🕊 {name} boykotu bitirdi, barıştınız! Boykot {partner.duration(since, now)} sürdü.", gif_id=baris_template.get("gif"))
         await send_gif(bot, pid, "baris", "🕊 Barıştınızzz! Kayra'ya haber verdim 💕", partner_keyboard(False))
     elif text == partner.OZLEDIM:
-        await send_gif(bot, owner, "ozledim", f"🥺 {name} seni özledi!")
+        ozledim_template = template("ozledim")
+        await send_gif(bot, owner, "ozledim", ozledim_template.get("text") or f"🥺 {name} seni özledi!", gif_id=ozledim_template.get("gif"))
         await bot.send_message(pid, "🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.SEVIYORUM:
-        await send_gif(bot, owner, "seviyorum", f"❤️ {name} seni seviyor!")
+        sev_template = template("seviyorum")
+        await send_gif(bot, owner, "seviyorum", sev_template.get("text") or f"❤️ {name} seni seviyor!", gif_id=sev_template.get("gif"))
         await bot.send_message(pid, "❤️ Kayra'ya ilettim, eminim o da seni çok seviyor.💞", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.MORAL:
-        await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
+        moral_template = template("moral")
+        if moral_template.get("text") or moral_template.get("gif"):
+            await send_gif(bot, owner, "moral", moral_template.get("text") or f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", MORAL_BUTTON, moral_template.get("gif"))
+        else:
+            await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
         await send_gif(bot, pid, "moral", "💕 Kayra'ya haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
     else:
         await bot.send_message(pid, partner.guide(name, p["briefing_time"]), reply_markup=partner_keyboard(bool(state)))
@@ -584,6 +598,8 @@ async def partner_action(context, d, text: str) -> None:
 async def owner_love_action(context, kind: str) -> None:
     d = _deps(context)
     bot, owner, p = context.bot, d["cfg"].owner_id, d.get("partner")
+    templates = await d["db"].get_kv("owner_love_templates") or {}
+    template = templates.get(kind, {})
     if not p:
         await bot.send_message(owner, "Önce /davet ile sevgilini Saha'ya ekle.")
         return
@@ -591,16 +607,16 @@ async def owner_love_action(context, kind: str) -> None:
         if not await d["db"].get_kv("kus"):
             await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
             return
-        if await gif_to_partner(bot, d, "gonlunu_al", "🥺 Kayra özür diliyor... Barışalım mı? Lütffeeeennn 🌹", BARIS_BUTTON):
+        if await gif_to_partner(bot, d, "gonlunu_al", template.get("text") or "🥺 Kayra özür diliyor... Barışalım mı? Lütffeeeennn 🌹", BARIS_BUTTON, template.get("gif")):
             await bot.send_message(owner, "🌹 Gönlünü almaya çalıştım, şimdi sıra onda 🤞")
     elif kind == "moral":
-        if await gif_to_partner(bot, d, "moral", "💕 Kayra seni düşünüyor, her şey yoluna girecek 🌸"):
+        if await gif_to_partner(bot, d, "moral", template.get("text") or "💕 Kayra seni düşünüyor, her şey yoluna girecek 🌸", gif_id=template.get("gif")):
             await bot.send_message(owner, "💌 Moral gönderildi.")
     elif kind == "ozledim":
-        if await gif_to_partner(bot, d, "ozledim", "🥺 Kayra seni çookk özledi!"):
+        if await gif_to_partner(bot, d, "ozledim", template.get("text") or "🥺 Kayra seni çookk özledi!", gif_id=template.get("gif")):
             await bot.send_message(owner, "🥺 İlettim.")
     elif kind == "seviyorum":
-        if await gif_to_partner(bot, d, "seviyorum", "❤️ Kayra seni dünyalar kadarr seviyorrr!"):
+        if await gif_to_partner(bot, d, "seviyorum", template.get("text") or "❤️ Kayra seni seviyor! Dünyalar kadar!", gif_id=template.get("gif")):
             await bot.send_message(owner, "❤️ İlettim.")
 
 

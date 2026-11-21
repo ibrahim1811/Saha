@@ -141,6 +141,9 @@ async def test_partner_only_reaches_own_endpoints(client):
     client.tg.bot_data["partner"] = dict(PARTNER)
     me = await (await client.get("/api/me", headers=_auth(99))).json()
     assert me["role"] == "partner" and me["name"] == "İlayda" and me["topics"]
+    assert me["briefing"]["sections"]["weather"] is True
+    assert me["briefing"]["news_count"] == 5
+    assert me["briefing"]["evening_time"] == "23:00"
     for path in ("/api/settings", "/api/notes", "/api/partner", "/api/school"):
         assert (await client.get(path, headers=_auth(99))).status == 403
     resp = await client.put("/api/partner/self", json={"briefing_time": "08:00", "evening_enabled": False, "news_topics": ["spor"]}, headers=_auth(99))
@@ -157,6 +160,10 @@ async def test_love_actions_from_panel(client):
     s = await (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth(99))).json()
     assert s["kus"] is True and "kus" in client.tg.bot_data["db"].kv
     assert client.tg.bot.send_animation.await_args_list[0].args[0] == 42
+    assert (await client.post("/api/love/action", json={"action": "seviyorum"}, headers=_auth(99))).status == 200
+    assert client.tg.bot.send_animation.await_args.args[0] == 42
+    assert (await client.post("/api/love/action", json={"action": "seviyorum"}, headers=_auth())).status == 200
+    assert client.tg.bot.send_animation.await_args.args[0] == 99
     assert (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth(99))).status == 400
     assert (await client.post("/api/love/action", json={"action": "kus"}, headers=_auth())).status == 400
     s = await (await client.post("/api/love/action", json={"action": "gonul"}, headers=_auth())).json()
@@ -164,6 +171,21 @@ async def test_love_actions_from_panel(client):
     s = await (await client.post("/api/love/action", json={"action": "baris"}, headers=_auth(99))).json()
     assert s["kus"] is False
     assert (await (await client.get("/api/love/state", headers=_auth(99))).json())["kus"] is False
+
+
+async def test_love_templates_are_separate_by_role(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    partner_data = await (await client.get("/api/love/templates", headers=_auth(99))).json()
+    assert "seviyorum" in [a["key"] for a in partner_data["actions"]]
+
+    partner_payload = {"seviyorum": {"text": "Seni çok seviyorum!", "gif": partner_data["actions"][3]["gifs"][0]["id"]}}
+    put = await client.put("/api/love/templates", json=partner_payload, headers=_auth(99))
+    assert put.status == 200
+    assert client.tg.bot_data["db"].kv["partner_love_templates"]["seviyorum"]["text"] == "Seni çok seviyorum!"
+
+    owner_data = await (await client.get("/api/love/templates", headers=_auth())).json()
+    assert "seviyorum" in [a["key"] for a in owner_data["actions"]]
+    assert "owner_love_templates" not in client.tg.bot_data["db"].kv
 
 
 async def test_owner_partner_panel(client):

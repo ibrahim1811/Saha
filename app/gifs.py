@@ -107,3 +107,9 @@ PACKS = {
 
 def pick(kind: str) -> str:
     return GIPHY.format(random.choice(PACKS[kind]))
+
+
+def pick_selected(kind: str, gif_id: str | None = None) -> str:
+    if gif_id and gif_id in PACKS.get(kind, []):
+        return GIPHY.format(gif_id)
+    return pick(kind)

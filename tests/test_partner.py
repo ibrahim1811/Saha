@@ -1,3 +1,4 @@
+import copy
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -258,6 +259,21 @@ async def test_partner_send_log_caps_entries(monkeypatch):
     for _ in range(botmod.PARTNER_SEND_LOG_MAX + 5):
         await botmod.log_partner_send(ctx.bot_data, "sabah", True)
     assert len(db.values["partner_sends"]) == botmod.PARTNER_SEND_LOG_MAX
+
+
+def test_partner_briefing_inherits_owner_sections_with_own_news():
+    owner = copy.deepcopy(botmod.settings.DEFAULTS)
+    owner["sections"]["finance"] = False
+    owner["sections"]["news"] = True
+    owner["news_topics"] = ["teknoloji"]
+    owner["news_count"] = 7
+
+    merged = botmod.partner_briefing_settings(PARTNER, owner)
+
+    assert merged["sections"] == owner["sections"]
+    assert merged["sections"]["finance"] is False
+    assert merged["news_topics"] == PARTNER["news_topics"]
+    assert merged["news_count"] == botmod.PARTNER_NEWS_COUNT
 
 
 def test_owner_rows_have_seviyorum():
