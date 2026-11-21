@@ -278,3 +278,52 @@ async def test_owner_seviyorum_sends_gif_to_partner():
     gif = _sent(ctx.bot.send_animation, 99)[-1]
     assert "seni seviyor" in gif.kwargs["caption"]
     assert _sent(ctx.bot.send_message, 42)[-1].args[1] == "❤️ İlettim."
+
+
+def _cd_db(exams):
+    db = KV()
+    db.exam_calendar_between = AsyncMock(return_value=exams)
+    return db
+
+
+async def test_countdown_lines_exams_holidays_and_weekend():
+    exam = {"id": 1, "subject": "Matematik", "kind": "yazılı", "branch": "", "day": date(2026, 11, 25), "time": ""}
+    lines = await botmod.countdown_lines({"db": _cd_db([exam])}, date(2026, 11, 22))
+    joined = "\n".join(lines)
+    assert "Matematik" in joined and "3 gün" in joined
+    assert "1. dönem ara tatili" not in joined
+
+
+async def test_countdown_lines_without_exams_says_none():
+    lines = await botmod.countdown_lines({"db": _cd_db([])}, date(2026, 11, 22))
+    assert "sınavın yok" in lines[0]
+
+
+async def test_countdown_lines_holiday_ending():
+    lines = await botmod.countdown_lines({"db": _cd_db([])}, date(2026, 11, 19))
+    assert any("bitmesine 1 gün" in line for line in lines)
+
+
+async def test_partner_briefing_includes_countdown_and_love(monkeypatch):
+    captured = {}
+
+    async def fake_build(today, src, settings, evening=False, from_hour=0, name="", top_lines=()):
+        captured["top"] = list(top_lines)
+        return SimpleNamespace(weather=None, text="x", text_without_weather="x")
+
+    async def fake_love(bot_data, today):
+        return ["💕 Özel gün"]
+
+    monkeypatch.setattr(botmod.briefing, "build", fake_build)
+    monkeypatch.setattr(botmod.briefing, "make_sources", lambda *a, **k: SimpleNamespace())
+    monkeypatch.setattr(botmod, "love_lines", fake_love)
+
+    db = _cd_db([])
+    bot_data = {"cfg": SimpleNamespace(tz=TZ), "db": db, "llm": None, "http": None}
+    await botmod.build_partner_briefing(bot_data, PARTNER, date(2026, 11, 22))
+    assert any("sınavın yok" in line for line in captured["top"])
+    assert "💕 Özel gün" in captured["top"]
+
+    await botmod.build_partner_briefing(bot_data, PARTNER, date(2026, 11, 22), evening=True)
+    assert "💕 Özel gün" not in captured["top"]
+    assert any("sınavın yok" in line for line in captured["top"])

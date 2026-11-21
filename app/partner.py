@@ -10,12 +10,12 @@ QUIET_START, QUIET_END = 0, 8
 KUS_INTERVAL_SECONDS = 3600
 EVENING_TIME = "23:00"
 
-KUS = "😤 Boykot başlasın"
-KUS_ALIASES = {KUS, "😤 Küstüm"}
-BARIS = "🕊 Barıştık"
-OZLEDIM = "🥺 Özledim"
+KUS = "😤 Boykot başlasın!!"
+KUS_ALIASES = {KUS, "😤 Küstümmm"}
+BARIS = "🕊 Barıştık, Yaşasınnnn!!"
+OZLEDIM = "🥺 Özledimmm"
 MORAL = "😔 Moralim bozuk"
-SEVIYORUM = "❤️ Seni seviyorum"
+SEVIYORUM = "❤️ Seni seviyorummm"
 GONUL = "🌹 Gönlünü al"
 YARDIM = "❓ Nasıl kullanılır"
 KUS_LOG_MAX = 200

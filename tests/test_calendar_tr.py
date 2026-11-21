@@ -24,4 +24,4 @@ def test_yks_line():
 def test_school_line_combines():
     text = school_line(date(2026, 11, 5), date(2027, 6, 19), True)
     assert text.startswith("🎯 YKS'ye") and "📅 1. dönem ara tatili 11 gün sonra (16 Kasım)" in text
-    assert "🏖 Bugün 1. dönem ara tatili" in school_line(date(2026, 11, 17), date(2027, 6, 19), True)
+    assert "🏖 1. dönem ara tatili bitmesine 3 gün" in school_line(date(2026, 11, 17), date(2027, 6, 19), True)

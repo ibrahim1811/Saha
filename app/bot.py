@@ -216,16 +216,30 @@ async def build_briefing(bot_data, today, evening: bool = False) -> tuple[briefi
     from_hour = now.hour if today == ref_day else 0
     src = briefing.make_sources(bot_data["cfg"], bot_data["db"], bot_data["llm"], bot_data["http"], today, s, ref_day)
     top = [] if evening else await love_lines(bot_data, today)
+    weekend = calendar_tr.weekend_line(today)
+    if weekend:
+        top = [weekend] + top
     return await briefing.build(today, src, s, evening=evening, from_hour=from_hour, top_lines=top), s
 
 
 def partner_briefing_settings(p: dict) -> dict:
     return {
-        "sections": {"weather": True, "lessons": True, "news": True},
+        "sections": {"weather": True, "lessons": True, "tasks": True, "news": True},
         "news_count": PARTNER_NEWS_COUNT,
         "news_topics": p["news_topics"],
         "photo_card": True,
     }
+
+
+async def countdown_lines(bot_data, today: date) -> list[str]:
+    db = bot_data["db"]
+    exams = await db.exam_calendar_between(today, today + timedelta(days=14))
+    lines = [examcal.format_upcoming(exams, today)] if exams else ["🧪 Yaklaşan sınavın yok 🎉"]
+    lines += calendar_tr.holiday_countdown(today)
+    weekend = calendar_tr.weekend_line(today)
+    if weekend:
+        lines.append(weekend)
+    return lines
 
 
 async def build_partner_briefing(bot_data, p: dict, today: date, evening: bool = False) -> tuple[briefing.Briefing, dict]:
@@ -234,7 +248,9 @@ async def build_partner_briefing(bot_data, p: dict, today: date, evening: bool =
     now = datetime.now(cfg.tz)
     from_hour = now.hour if today == now.date() else 0
     src = briefing.make_sources(cfg, bot_data["db"], bot_data["llm"], bot_data["http"], today, s, now.date(), school_only=True)
-    top = [] if evening else await love_lines(bot_data, today)
+    top = await countdown_lines(bot_data, today)
+    if not evening:
+        top += await love_lines(bot_data, today)
     return await briefing.build(today, src, s, evening=evening, from_hour=from_hour, name=p["name"], top_lines=top), s
 
 
@@ -541,7 +557,7 @@ async def partner_action(context, d, text: str) -> None:
         await d["db"].set_kv("kus", {"since": now.isoformat()})
         schedule_kus(context.job_queue)
         await send_gif(bot, owner, "boykot", f"🚨 BOYKOT BAŞLADI! {name} seni boykot ediyor. Hemen gönlünü al 🌹", GONUL_BUTTON)
-        await bot.send_message(pid, f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas.", reply_markup=partner_keyboard(True))
+        await bot.send_message(pid, f"Boykot başladı 😤 Kayra'ya haber verdim. Barışınca {partner.BARIS} butonuna bas. Ama o seni çok seviyor bunu asla unutmaaa.", reply_markup=partner_keyboard(True))
     elif text == partner.BARIS:
         if not state:
             await bot.send_message(pid, "Şu an boykot yok 🙂", reply_markup=partner_keyboard(False))
@@ -551,13 +567,13 @@ async def partner_action(context, d, text: str) -> None:
         since = datetime.fromisoformat(state["since"])
         await d["db"].set_kv("kus_log", partner.log_kus(await d["db"].get_kv("kus_log"), since, now))
         await send_gif(bot, owner, "baris", f"🕊 {name} boykotu bitirdi, barıştınız! Boykot {partner.duration(since, now)} sürdü.")
-        await send_gif(bot, pid, "baris", "🕊 Barıştınız! Kayra'ya haber verdim 💕", partner_keyboard(False))
+        await send_gif(bot, pid, "baris", "🕊 Barıştınızzz! Kayra'ya haber verdim 💕", partner_keyboard(False))
     elif text == partner.OZLEDIM:
         await send_gif(bot, owner, "ozledim", f"🥺 {name} seni özledi!")
         await bot.send_message(pid, "🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.SEVIYORUM:
         await send_gif(bot, owner, "seviyorum", f"❤️ {name} seni seviyor!")
-        await bot.send_message(pid, "❤️ Kayra'ya ilettim, o da seni seviyor 💞", reply_markup=partner_keyboard(bool(state)))
+        await bot.send_message(pid, "❤️ Kayra'ya ilettim, eminim o da seni çok seviyor.💞", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.MORAL:
         await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
         await send_gif(bot, pid, "moral", "💕 Kayra'ya haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
@@ -575,16 +591,16 @@ async def owner_love_action(context, kind: str) -> None:
         if not await d["db"].get_kv("kus"):
             await bot.send_message(owner, "Şu an boykot yok, barışıksınız 🕊")
             return
-        if await gif_to_partner(bot, d, "gonlunu_al", "🥺 Kayra özür diliyor... Barışalım mı? 🌹", BARIS_BUTTON):
+        if await gif_to_partner(bot, d, "gonlunu_al", "🥺 Kayra özür diliyor... Barışalım mı? Lütffeeeennn 🌹", BARIS_BUTTON):
             await bot.send_message(owner, "🌹 Gönlünü almaya çalıştım, şimdi sıra onda 🤞")
     elif kind == "moral":
         if await gif_to_partner(bot, d, "moral", "💕 Kayra seni düşünüyor, her şey yoluna girecek 🌸"):
             await bot.send_message(owner, "💌 Moral gönderildi.")
     elif kind == "ozledim":
-        if await gif_to_partner(bot, d, "ozledim", "🥺 Kayra seni özledi!"):
+        if await gif_to_partner(bot, d, "ozledim", "🥺 Kayra seni çookk özledi!"):
             await bot.send_message(owner, "🥺 İlettim.")
     elif kind == "seviyorum":
-        if await gif_to_partner(bot, d, "seviyorum", "❤️ Kayra seni seviyor!"):
+        if await gif_to_partner(bot, d, "seviyorum", "❤️ Kayra seni dünyalar kadarr seviyorrr!"):
             await bot.send_message(owner, "❤️ İlettim.")
 
 

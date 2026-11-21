@@ -42,7 +42,35 @@ def school_line(d: date, yks: date, estimated: bool) -> str:
     lines = [line for line in [yks_line(d, yks, estimated)] if line]
     today_holiday = holiday_on(d)
     if today_holiday:
-        lines.append(f"🏖 Bugün {today_holiday}")
+        end = next(end for start, end, name in EVENTS if name == today_holiday)
+        left = (end - d).days
+        lines.append(f"🏖 {today_holiday} bugün bitiyor, yarın okul var" if left == 0
+                     else f"🏖 {today_holiday} bitmesine {left} gün")
     for start, _, name in upcoming(d):
         lines.append(f"📅 {name} {(start - d).days} gün sonra ({fmt_day(start)})")
     return "\n".join(lines) or "Yaklaşan bir okul olayı yok."
+
+
+def holiday_countdown(d: date) -> list[str]:
+    lines: list[str] = []
+    today_holiday = holiday_on(d)
+    if today_holiday:
+        end = next(end for start, end, name in EVENTS if name == today_holiday)
+        left = (end - d).days
+        if left == 0:
+            lines.append(f"🏖 {today_holiday} bugün bitiyor, yarın okul var")
+        else:
+            lines.append(f"🏖 {today_holiday} bitmesine {left} gün")
+    for start, _, name in upcoming(d):
+        lines.append(f"📅 {name} {(start - d).days} gün sonra ({fmt_day(start)})")
+    return lines
+
+
+def weekend_line(d: date) -> str | None:
+    weekday = d.weekday()
+    if weekday == 4:
+        return "🎉 Bugün Cuma, hafta sonu başlıyor"
+    if weekday >= 5:
+        return "🎉 Hafta sonu, okul yok"
+    days = 4 - weekday
+    return f"📅 Cumaya {days} gün" if days > 1 else "📅 Yarın Cuma"
