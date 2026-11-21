@@ -31,7 +31,10 @@ class LLM:
         self.vision_model = vision_model
         self.http = http or httpx.AsyncClient()
 
-    async def ask(self, prompt: str, system: str = "", image: bytes | None = None, max_tokens: int = 1024, reasoning: str | None = None) -> str:
+    async def ask(
+        self, prompt: str, system: str = "", image: bytes | None = None, max_tokens: int = 1024,
+        reasoning: str | None = None, timeout: float = 30,
+    ) -> str:
         if image is None:
             user = prompt
         else:
@@ -51,7 +54,7 @@ class LLM:
                 f"{self.base_url}/chat/completions",
                 json=body,
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                timeout=30,
+                timeout=timeout,
             )
         except httpx.HTTPError as e:
             raise LLMError(f"LLM API'ye ulaşılamadı: {e!r}") from e
@@ -65,5 +68,8 @@ class LLM:
             raise LLMError("LLM boş yanıt döndü")
         return content
 
-    async def ask_json(self, prompt: str, system: str = "", image: bytes | None = None):
-        return extract_json(await self.ask(prompt, system, image))
+    async def ask_json(
+        self, prompt: str, system: str = "", image: bytes | None = None,
+        max_tokens: int = 1024, timeout: float = 30,
+    ):
+        return extract_json(await self.ask(prompt, system, image, max_tokens=max_tokens, timeout=timeout))

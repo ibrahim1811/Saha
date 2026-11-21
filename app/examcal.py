@@ -7,6 +7,24 @@ TURLER = ("yazılı", "sözlü", "deneme", "uygulama")
 VARSAYILAN_TUR = "yazılı"
 TUR_ADI = {"yazılı": "yazılısı", "sözlü": "sözlüsü", "deneme": "denemesi", "uygulama": "uygulaması"}
 BRANCH_KEY = "exam_branch"
+BRANCH_PROMPT = (
+    "Bu bir okul sınav takvimi fotoğrafı. Sadece JSON döndür, başka bir şey yazma. Biçim: "
+    '{"siniflar": ["9.SINIF", "10.SINIF", "12-SAY"]}. '
+    "siniflar: tablonun üst satırındaki şube/sınıf sütun başlıkları, fotoğraftaki yazımla aynen. "
+    "Tabloda sütun başlığı yoksa boş liste döndür. Ders adı, tarih ya da saat yazma."
+)
+COLUMN_PROMPT = (
+    "Bu bir okul sınav takvimi fotoğrafı. Sadece JSON döndür, başka bir şey yazma. Biçim: "
+    '{"sinavlar": [{"tarih": "2026-11-03", "saat": "3. ders", "ders": "Matematik", "tur": "yazılı"}]}. '
+    "Tabloda satırlar tarihleri, sütunlar şubeleri gösterir. SADECE {sinif} sütununu oku, diğer sütunları okuma. "
+    "Tarih hücresi birden çok satıra yayılmış olabilir: o tarih, yanındaki tüm ders satırları için geçerlidir. "
+    "saat: hücrede gerçek saat varsa HH:MM; '3.DERS' ya da '7.DERS' gibi ders saati yazıyorsa '3. ders' biçiminde; "
+    "hiçbiri yoksa boş string. Boş hücreleri atla. Aynı hücrede alt alta iki ders varsa her biri ayrı sınavdır. "
+    "'TÜRK DİLİ ve EDEBİYATI', 'İNKILAP TARİHİ ve ATATÜRKÇÜLÜK' gibi tek ders adlarını bölme. "
+    "tarih YYYY-AA-GG biçiminde (fotoğrafta yıl yoksa {yil} varsay). "
+    "tur: yazılı, sözlü, deneme ya da uygulama; yazmıyorsa yazılı. Okunamayan alanı boş bırak, uydurma. "
+    "Sınav yoksa sinavlar: [] döndür."
+)
 PROMPT = (
     "Bu bir okul sınav takvimi fotoğrafı. Sadece JSON döndür, başka bir şey yazma. Biçim: "
     '{"siniflar": ["12 Say", "12 EA"], "sinavlar": [{"sinif": "12 Say", "tarih": "2026-11-10", '
@@ -14,8 +32,10 @@ PROMPT = (
     "siniflar: fotoğrafta görünen şube/sınıf adları (12 Say, 11-B gibi), aynen yaz. "
     "sinavlar: her satır ayrı bir sınav. sinif alanına o sınavın hangi şubeye ait olduğunu yaz; "
     "sınav bütün şubeler için ortaksa boş string bırak. "
+    "Tarih hücresi birden çok satıra yayılmış olabilir: o tarih, yanındaki tüm ders satırları için geçerlidir. "
+    "Boş hücreleri atla. Aynı hücrede alt alta iki ders varsa her biri ayrı sınavdır. "
     "tarih YYYY-AA-GG biçiminde (fotoğrafta yıl yoksa {yil} varsay). "
-    "saat HH:MM biçiminde; saat yoksa boş string. "
+    "saat: gerçek saat varsa HH:MM, '3.DERS' gibi ders saati yazıyorsa '3. ders', yoksa boş string. "
     "tur: yazılı, sözlü, deneme ya da uygulama; yazmıyorsa yazılı. "
     "Okunamayan alanı boş bırak, uydurma. Sınav yoksa sinavlar: [] döndür."
 )
@@ -40,11 +60,27 @@ def _normalize(text: str) -> str:
     return text.replace("İ", "i").replace("I", "ı").lower().strip()
 
 
+_DERS_RE = re.compile(r"(\d{1,2})\s*[.)]?\s*ders", re.I)
+
+
 def _saat(value) -> str:
-    m = re.search(r"(\d{1,2})[:.](\d{2})", str(value or ""))
-    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-        return ""
-    return f"{int(m.group(1)):02d}:{m.group(2)}"
+    text = str(value or "").strip()
+    m = re.search(r"(\d{1,2})[:.](\d{2})", text)
+    if m and int(m.group(1)) <= 23 and int(m.group(2)) <= 59:
+        return f"{int(m.group(1)):02d}:{m.group(2)}"
+    d = _DERS_RE.search(text)
+    if d and 1 <= int(d.group(1)) <= 12:
+        return f"{int(d.group(1))}. ders"
+    return ""
+
+
+def _saat_key(at_time: str) -> tuple[int, int]:
+    if not at_time:
+        return (2, 0)
+    if at_time.endswith("ders"):
+        return (0, int(at_time.split(".")[0]))
+    hour, minute = at_time.split(":")
+    return (1, int(hour) * 60 + int(minute))
 
 
 def _tur(value) -> str:
