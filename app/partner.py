@@ -15,6 +15,8 @@ KUS_ALIASES = {KUS, "😤 Küstüm"}
 BARIS = "🕊 Barıştık"
 OZLEDIM = "🥺 Özledim"
 MORAL = "😔 Moralim bozuk"
+SEVIYORUM = "❤️ Seni seviyorum"
+GONUL = "🌹 Gönlünü al"
 YARDIM = "❓ Nasıl kullanılır"
 KUS_LOG_MAX = 200
 
@@ -86,7 +88,11 @@ def targets_partner(message: str, name: str | None) -> bool:
 
 
 def keyboard_rows(kus: bool) -> list[list[str]]:
-    return [[BARIS if kus else KUS, OZLEDIM], [MORAL, YARDIM]]
+    return [[BARIS if kus else KUS, OZLEDIM], [MORAL, SEVIYORUM], [YARDIM]]
+
+
+def owner_rows() -> list[list[str]]:
+    return [[OZLEDIM, SEVIYORUM], [GONUL, YARDIM]]
 
 
 def log_kus(log: list | None, since: datetime, until: datetime) -> list:
@@ -142,11 +148,22 @@ def guide(name: str, briefing_time: str) -> str:
         f"• {KUS} — Kayra'ya anında 🚨 alarm gider; barışana kadar saatte bir hatırlatılır 😤\n"
         f"• {BARIS} — boykot biter, Kayra'ya ne kadar sürdüğü bildirilir\n"
         f"• {OZLEDIM} — Kayra'ya özlediğini iletirim\n"
-        f"• {MORAL} — Kayra'ya haber veririm, sana da moral gelir\n\n"
+        f"• {MORAL} — Kayra'ya haber veririm, sana da moral gelir\n"
+        f"• {SEVIYORUM} — Kayra'ya \"seni seviyorum\" derim 💞\n\n"
         "⚙️ Panel (sol alttaki Panel düğmesi):\n"
         "• Hangi konularda haber geleceğini seç (gündem, yaşam, spor, sağlık…)\n"
         "• Sabah özeti saatini değiştir\n"
         "• Gece özetini aç/kapat\n"
         "Değiştirdikten sonra alttaki Kaydet'e basman yeterli.\n\n"
         f"Hepsi bu kadar {name} 💕"
+    )
+
+
+def owner_help(partner_name: str) -> str:
+    return (
+        "⬇️ Alttaki butonlar:\n"
+        f"• {OZLEDIM} — {partner_name} kişisine özlediğini iletir\n"
+        f"• {SEVIYORUM} — {partner_name} kişisine \"seni seviyorum\" der 💞\n"
+        f"• {GONUL} — boykot varsa gönlünü alır 🌹\n"
+        "• ❓ Nasıl kullanılır — bu rehberi tekrar gösterir"
     )

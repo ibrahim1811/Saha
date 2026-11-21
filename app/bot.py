@@ -46,7 +46,8 @@ HELP = (
     "/sil <id> hatırlatıcıyı sil\n\n"
     "💕 /davet sevgilini Saha'ya ekle, /ozledim ona özlediğini ilet\n"
     "💕 /gonlunual boykottaysa gönlünü al, /boykot istatistikler\n"
-    "💕 \"İlayda'ya yarın 15'te sınavını hatırlat\" → hatırlatma ona gider"
+    "💕 \"İlayda'ya yarın 15'te sınavını hatırlat\" → hatırlatma ona gider\n"
+    "⬇️ Alttaki butonlar: ❤️ Seni seviyorum, 🥺 Özledim, 🌹 Gönlünü al, ❓ Nasıl kullanılır"
 )
 PHOTO_MENU = InlineKeyboardMarkup([
     [InlineKeyboardButton("📚 Ders programı", callback_data="pick:program")],
@@ -85,6 +86,7 @@ MORAL_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("💌 Moral ver", cal
 BARIS_BUTTON = InlineKeyboardMarkup([[InlineKeyboardButton("🕊 Barıştık", callback_data="love:baris")]])
 PARTNER_NEWS_COUNT = 5
 PARTNER_SEND_LOG_MAX = 20
+OWNER_BUTTONS = {partner.SEVIYORUM: "seviyorum", partner.OZLEDIM: "ozledim", partner.GONUL: "gonul"}
 MERGE_BUTTONS = InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Mevcut programa ekle", callback_data="merge")],
     [InlineKeyboardButton("♻️ Eskisinin yerine koy", callback_data="save")],
@@ -104,9 +106,10 @@ def _now(context) -> datetime:
     return datetime.now(_deps(context)["cfg"].tz)
 
 
-async def send_text(bot, chat_id: int, text: str) -> None:
-    for part in split_message(text):
-        await bot.send_message(chat_id, part)
+async def send_text(bot, chat_id: int, text: str, reply_markup=None) -> None:
+    parts = split_message(text)
+    for i, part in enumerate(parts):
+        await bot.send_message(chat_id, part, reply_markup=reply_markup if i == len(parts) - 1 else None)
 
 
 async def gate(update, context) -> None:
@@ -143,7 +146,7 @@ PARTNER_COMMANDS = [BotCommand("panel", "Paneli aç")]
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(HELP)
+    await update.message.reply_text(HELP, reply_markup=owner_keyboard())
 
 
 async def panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -244,7 +247,7 @@ def next_briefing_day(now: datetime, briefing_time: str) -> date:
     return now.date() if (now.hour, now.minute) < (hour, minute) else now.date() + timedelta(days=1)
 
 
-async def deliver_briefing(bot, chat_id: int, result: briefing.Briefing, s: dict, today: date, suffix: str = "") -> None:
+async def deliver_briefing(bot, chat_id: int, result: briefing.Briefing, s: dict, today: date, suffix: str = "", reply_markup=None) -> None:
     if s["photo_card"] and result.weather:
         try:
             png = card.render_card(result.weather.w, result.weather.hints, today)
@@ -253,21 +256,21 @@ async def deliver_briefing(bot, chat_id: int, result: briefing.Briefing, s: dict
             log.warning("Hava kartı zaman aşımına uğradı, büyük ihtimalle ulaştı; hava tekrar gönderilmiyor")
         except Exception:
             log.exception("Hava kartı gönderilemedi, metne dönülüyor")
-            await send_text(bot, chat_id, result.text + suffix)
+            await send_text(bot, chat_id, result.text + suffix, reply_markup)
             return
-        await send_text(bot, chat_id, result.text_without_weather + suffix)
+        await send_text(bot, chat_id, result.text_without_weather + suffix, reply_markup)
         return
-    await send_text(bot, chat_id, result.text + suffix)
+    await send_text(bot, chat_id, result.text + suffix, reply_markup)
 
 
 async def send_briefing(context: ContextTypes.DEFAULT_TYPE, day: date | None = None, evening: bool = False) -> None:
     d = _deps(context)
     today = day or _now(context).date()
     result, s = await build_briefing(d, today, evening=evening)
-    await deliver_briefing(context.bot, d["cfg"].owner_id, result, s, today)
+    await deliver_briefing(context.bot, d["cfg"].owner_id, result, s, today, reply_markup=owner_keyboard())
 
 
-async def log_partner_send(d, kind: str, ok: bool, error: str = "") -> None:
+async def log_partner_send(d, kind: str, ok: bool, error: str = "", name: str = "") -> None:
     items = await d["db"].get_kv("partner_sends") or []
     items.insert(0, {
         "time": datetime.now(d["cfg"].tz).isoformat(),
@@ -276,6 +279,10 @@ async def log_partner_send(d, kind: str, ok: bool, error: str = "") -> None:
         "error": error[:300],
     })
     await d["db"].set_kv("partner_sends", items[:PARTNER_SEND_LOG_MAX])
+    if ok:
+        log.info("Partner gönderimi OK (%s, %s)", kind, name)
+    else:
+        log.warning("Partner gönderimi HATA (%s, %s): %s", kind, name, error)
 
 
 async def send_partner_briefing(context, day: date | None = None, evening: bool = False) -> None:
@@ -289,7 +296,7 @@ async def send_partner_briefing(context, day: date | None = None, evening: bool 
         result, s = await build_partner_briefing(d, p, today, evening=evening)
     except Exception as e:
         log.warning("Partner özeti hazırlanamadı: %r", e)
-        await log_partner_send(d, kind, False, f"hazırlık: {e!r}")
+        await log_partner_send(d, kind, False, f"hazırlık: {e!r}", p["name"])
         await context.bot.send_message(d["cfg"].owner_id, f"⚠️ {p['name']} için özet hazırlanamadı: {e!r}"[:300])
         return
     note = None
@@ -299,13 +306,14 @@ async def send_partner_briefing(context, day: date | None = None, evening: bool 
     suffix = f"\n\n💌 Kayra'dan not:\n{note['text']}" if note else ""
     try:
         await send_gif(context.bot, p["id"], "iyi_geceler" if evening else "gunaydin")
-        await deliver_briefing(context.bot, p["id"], result, s, today, suffix)
+        await deliver_briefing(context.bot, p["id"], result, s, today, suffix,
+                               reply_markup=partner_keyboard(bool(await d["db"].get_kv("kus"))))
     except Exception as e:
         log.warning("Partner özeti gönderilemedi: %r", e)
-        await log_partner_send(d, kind, False, repr(e))
+        await log_partner_send(d, kind, False, repr(e), p["name"])
         await context.bot.send_message(d["cfg"].owner_id, unreachable(p))
         return
-    await log_partner_send(d, kind, True)
+    await log_partner_send(d, kind, True, name=p["name"])
     if note:
         await d["db"].mark_love_note_delivered(note["id"])
 
@@ -367,6 +375,10 @@ def unreachable(p: dict) -> str:
 
 def partner_keyboard(kus: bool) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(partner.keyboard_rows(kus), resize_keyboard=True, is_persistent=True)
+
+
+def owner_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(partner.owner_rows(), resize_keyboard=True, is_persistent=True)
 
 
 async def load_partner(bot_data) -> dict | None:
@@ -543,6 +555,9 @@ async def partner_action(context, d, text: str) -> None:
     elif text == partner.OZLEDIM:
         await send_gif(bot, owner, "ozledim", f"🥺 {name} seni özledi!")
         await bot.send_message(pid, "🥺 Kayra'ya ilettim.", reply_markup=partner_keyboard(bool(state)))
+    elif text == partner.SEVIYORUM:
+        await send_gif(bot, owner, "seviyorum", f"❤️ {name} seni seviyor!")
+        await bot.send_message(pid, "❤️ Kayra'ya ilettim, o da seni seviyor 💞", reply_markup=partner_keyboard(bool(state)))
     elif text == partner.MORAL:
         await bot.send_message(owner, f"😔 {name} moralinin bozuk olduğunu söyledi. Hemen yanında ol 💕", reply_markup=MORAL_BUTTON)
         await send_gif(bot, pid, "moral", "💕 Kayra'ya haber verdim, birazdan yazar. Bu da sana küçük bir moral 🌸", partner_keyboard(bool(state)))
@@ -568,6 +583,9 @@ async def owner_love_action(context, kind: str) -> None:
     elif kind == "ozledim":
         if await gif_to_partner(bot, d, "ozledim", "🥺 Kayra seni özledi!"):
             await bot.send_message(owner, "🥺 İlettim.")
+    elif kind == "seviyorum":
+        if await gif_to_partner(bot, d, "seviyorum", "❤️ Kayra seni seviyor!"):
+            await bot.send_message(owner, "❤️ İlettim.")
 
 
 async def davet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1074,10 +1092,18 @@ async def yks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message.text
+    d = _deps(context)
+    action = OWNER_BUTTONS.get(message.strip())
+    if action:
+        await owner_love_action(context, action)
+        return
+    if message.strip() == partner.YARDIM:
+        p = d.get("partner")
+        await update.message.reply_text(partner.owner_help(p["name"] if p else "sevgilin"), reply_markup=owner_keyboard())
+        return
     kind = intents.route(message)
     if kind and await handle_intent(update, context, message, kind):
         return
-    d = _deps(context)
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
     try:
         reply = await chat.answer(message, d["db"], d["llm"], _now(context))

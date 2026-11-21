@@ -17,6 +17,13 @@ PACKS = {
         "5Gb6pmAu8o0Ba",
         "B2TG4Rx3gPuMw",
     ],
+    "seviyorum": [
+        "uGs3nvw76BfzPWnSv6",
+        "7zzjU4ToWpasY36ab4",
+        "fV8iuSEwLQ6005diSh",
+        "DNe4LKL6iwZ2goCSx6",
+        "TKpe3SrCf2OLTBGJjc",
+    ],
     "ozledim": [
         "OGFscrnS0ChNevAuZb",
         "aYzH8ZuH97cYWbUR9a",

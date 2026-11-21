@@ -212,7 +212,7 @@ async def test_help_button_sends_guide():
         await botmod.gate(_upd(99, partner.YARDIM), ctx)
     reply = _sent(ctx.bot.send_message, 99)[-1]
     assert "Boykot başlasın" in reply.args[1] and "07:00" in reply.args[1] and "Moralim bozuk" in reply.args[1]
-    assert reply.kwargs["reply_markup"].keyboard[1][1].text == partner.YARDIM
+    assert reply.kwargs["reply_markup"].keyboard[2][0].text == partner.YARDIM
 
 
 async def test_partner_reminder_goes_to_partner():
@@ -258,3 +258,23 @@ async def test_partner_send_log_caps_entries(monkeypatch):
     for _ in range(botmod.PARTNER_SEND_LOG_MAX + 5):
         await botmod.log_partner_send(ctx.bot_data, "sabah", True)
     assert len(db.values["partner_sends"]) == botmod.PARTNER_SEND_LOG_MAX
+
+
+def test_owner_rows_have_seviyorum():
+    assert partner.SEVIYORUM in partner.owner_rows()[0]
+
+
+async def test_partner_seviyorum_notifies_owner():
+    ctx = _ctx(KV())
+    with pytest.raises(ApplicationHandlerStop):
+        await botmod.gate(_upd(99, partner.SEVIYORUM), ctx)
+    assert "seni seviyor" in _sent(ctx.bot.send_animation, 42)[-1].kwargs["caption"]
+    assert _sent(ctx.bot.send_message, 99)[-1].args[1].startswith("❤️")
+
+
+async def test_owner_seviyorum_sends_gif_to_partner():
+    ctx = _ctx(KV())
+    await botmod.owner_love_action(ctx, "seviyorum")
+    gif = _sent(ctx.bot.send_animation, 99)[-1]
+    assert "seni seviyor" in gif.kwargs["caption"]
+    assert _sent(ctx.bot.send_message, 42)[-1].args[1] == "❤️ İlettim."
