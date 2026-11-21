@@ -27,6 +27,7 @@ async def _post_init(app: Application) -> None:
     bot.reschedule_partner(app.job_queue, p, cfg.tz)
     await bot.restore_kus(app)
     bot.schedule_special_days(app.job_queue, cfg.tz)
+    bot.schedule_daily_tasks(app.job_queue, cfg.tz)
     bot.schedule_keep_alive(app.job_queue, cfg.public_url)
     bot.schedule_weather_alerts(app.job_queue)
     try:

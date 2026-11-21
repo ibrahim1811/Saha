@@ -437,6 +437,14 @@
 
   function renderDailyTasks(data) {
     const task = data.task;
+    if (!data.available || !task) {
+      $("daily-status").textContent = "Görev saati 07:00–23:00";
+      $("daily-task").innerHTML = '<p class="empty">Günlük görevler 07:00’de başlar ve 23:00’te sona erer.</p>';
+      $("daily-counter").innerHTML = "";
+      $("daily-counter-title").hidden = true;
+      return;
+    }
+    $("daily-counter-title").hidden = false;
     const statusText = task.status === "completed" ? "✅ Tamamlandı" : task.status === "failed" ? "😔 Yapamadı" : task.status === "penalty" ? "🎁 Ceza seçildi" : "🎯 Bekliyor";
     $("daily-status").textContent = `${data.today} · ${task.theme}`;
     $("daily-task").innerHTML = `

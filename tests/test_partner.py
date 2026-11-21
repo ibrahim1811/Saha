@@ -276,6 +276,15 @@ def test_partner_briefing_inherits_owner_sections_with_own_news():
     assert merged["news_count"] == botmod.PARTNER_NEWS_COUNT
 
 
+def test_daily_task_schedule_runs_at_seven_and_twenty_three():
+    queue = MagicMock()
+    queue.get_jobs_by_name.return_value = []
+    botmod.schedule_daily_tasks(queue, TZ)
+    calls = queue.run_daily.call_args_list
+    assert [c.kwargs["name"] for c in calls] == ["gunluk-gorev-baslangic", "gunluk-gorev-bitir"]
+    assert [c.kwargs["time"].hour for c in calls] == [7, 23]
+
+
 def test_owner_rows_have_seviyorum():
     assert partner.SEVIYORUM in partner.owner_rows()[0]
 

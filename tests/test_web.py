@@ -200,8 +200,11 @@ async def test_custom_gif_url_and_owner_kus(client):
     assert client.tg.bot.send_animation.await_args.args[1] == "https://example.com/ozel.gif"
 
 
-async def test_daily_tasks_are_separate_and_failed_task_offers_penalties(client):
+async def test_daily_tasks_are_separate_and_failed_task_offers_penalties(client, monkeypatch):
+    from app import web as web_mod
+
     client.tg.bot_data["partner"] = dict(PARTNER)
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 11, 22, 8, 0, tzinfo=tz))
 
     owner = await (await client.get("/api/daily-tasks", headers=_auth())).json()
     assert owner["task"]["theme"] and owner["task"]["text"]
@@ -229,6 +232,57 @@ async def test_daily_tasks_are_separate_and_failed_task_offers_penalties(client)
     assert penalized.status == 200
     partner = await (await client.get("/api/daily-tasks", headers=_auth(99))).json()
     assert partner["task"]["status"] == "penalty"
+
+
+async def test_daily_tasks_only_open_between_seven_and_twenty_three(client, monkeypatch):
+    from app import web as web_mod
+
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 11, 22, 6, 59, tzinfo=tz))
+    before = await (await client.get("/api/daily-tasks", headers=_auth())).json()
+    assert before["available"] is False and before["task"] is None
+    assert client.tg.bot_data["db"].kv.get("daily_tasks") is None
+
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 11, 22, 23, 0, tzinfo=tz))
+    closed = await client.post("/api/daily-tasks", json={"action": "complete"}, headers=_auth())
+    assert closed.status == 409
+
+
+async def test_daily_task_start_sends_each_users_own_task(client, monkeypatch):
+    from app import bot as bot_mod
+    from app import daily_tasks as daily_tasks_mod
+
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    monkeypatch.setattr(bot_mod, "_now", lambda context: datetime(2026, 11, 22, 7, 0, tzinfo=TZ))
+    context = SimpleNamespace(bot=client.tg.bot, bot_data=client.tg.bot_data)
+    await bot_mod.send_daily_tasks(context)
+
+    state = client.tg.bot_data["db"].kv["daily_tasks"]
+    day = state["days"]["2026-11-22"]
+    sent = client.tg.bot.send_message.await_args_list
+    assert [call.args[0] for call in sent] == [client.tg.bot_data["cfg"].owner_id, PARTNER["id"]]
+    assert day["owner"]["text"] in sent[0].args[1]
+    assert day["partner"]["text"] in sent[1].args[1]
+    assert all(f"{daily_tasks_mod.END_HOUR:02d}:00" in call.args[1] for call in sent)
+
+
+async def test_daily_task_deadline_marks_unfinished_and_notifies_other_side(client):
+    from app import bot as bot_mod
+    from app import daily_tasks as daily_tasks_mod
+
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    day = datetime(2026, 11, 22, tzinfo=TZ).date()
+    state = daily_tasks_mod.ensure_day(None, day, "Kayra", PARTNER["name"])
+    await client.tg.bot_data["db"].set_kv("daily_tasks", state)
+    context = SimpleNamespace(
+        bot=client.tg.bot,
+        bot_data=client.tg.bot_data,
+    )
+    await bot_mod.end_daily_tasks(context)
+    stored = client.tg.bot_data["db"].kv["daily_tasks"]["days"][day.isoformat()]
+    assert stored["owner"]["status"] == stored["partner"]["status"] == "failed"
+    assert len(client.tg.bot.send_message.await_args_list) == 2
+    assert "23:00'e kadar tamamlanmadı" in stored["owner"]["outcome"]
 
 
 async def test_owner_partner_panel(client):

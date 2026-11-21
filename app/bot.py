@@ -16,7 +16,8 @@ from telegram.ext import (
 from telegram.error import Conflict, NetworkError, TimedOut
 
 from app import (
-    briefing, calendar_tr, card, chat, examcal, gifs, intents, love, partner, reminders, schedule, school, settings, tasks,
+    briefing, calendar_tr, card, chat, daily_tasks, examcal, gifs, intents, love, partner, reminders, schedule, school,
+    settings, tasks,
     weather,
 )
 from app.llm import LLMError
@@ -481,6 +482,76 @@ async def special_day_job(context) -> None:
 
 def schedule_special_days(job_queue, tz: ZoneInfo) -> None:
     job_queue.run_daily(special_day_job, time=SPECIAL_DAY_ALERT.replace(tzinfo=tz), name="ozel-gun")
+
+
+def schedule_daily_tasks(job_queue, tz: ZoneInfo) -> None:
+    for name in ("gunluk-gorev-baslangic", "gunluk-gorev-bitir"):
+        for job in job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+    job_queue.run_daily(
+        send_daily_tasks,
+        time=time(daily_tasks.START_HOUR, 0, tzinfo=tz),
+        name="gunluk-gorev-baslangic",
+    )
+    job_queue.run_daily(
+        end_daily_tasks,
+        time=time(daily_tasks.END_HOUR, 0, tzinfo=tz),
+        name="gunluk-gorev-bitir",
+    )
+
+
+async def send_daily_tasks(context) -> None:
+    d = _deps(context)
+    p = d.get("partner")
+    if not p:
+        return
+    today = _now(context).date()
+    state = await daily_tasks.assign_day(d["db"], d.get("llm"), today, "Kayra", p["name"])
+    day = state["days"][today.isoformat()]
+    for chat_id, role in ((d["cfg"].owner_id, "owner"), (p["id"], "partner")):
+        task = day[role]
+        text = f"🎯 Günlük görevin ({task['theme']}):\n\n{task['text']}\n\n23:00'e kadar tamamla."
+        try:
+            await context.bot.send_message(chat_id, text)
+        except Exception:
+            log.exception("Günlük görev gönderilemedi (%s)", role)
+
+
+async def end_daily_tasks(context) -> None:
+    d = _deps(context)
+    p = d.get("partner")
+    if not p:
+        return
+    today = _now(context).date()
+    state = await d["db"].get_kv("daily_tasks") or {}
+    day = state.get("days", {}).get(today.isoformat())
+    if not day:
+        return
+
+    failed = []
+    for role in ("owner", "partner"):
+        task = day.get(role)
+        if task and task["status"] == "pending":
+            task["status"] = "failed"
+            task["outcome"] = "23:00'e kadar tamamlanmadı"
+            task["penalty_options"] = list(daily_tasks.PENALTIES)
+            failed.append((role, task))
+    if not failed:
+        return
+    await d["db"].set_kv("daily_tasks", state)
+
+    for role, task in failed:
+        counter_id = p["id"] if role == "owner" else d["cfg"].owner_id
+        owner_label = "Kayra" if role == "owner" else p["name"]
+        penalties = "\n".join(f"{i + 1}. {choice}" for i, choice in enumerate(task["penalty_options"]))
+        text = (
+            f"⏰ {owner_label} günlük görevini yapamadı:\n{task['text']}\n\n"
+            f"Karşı taraf 3 cezadan birini seçebilir:\n{penalties}"
+        )
+        try:
+            await context.bot.send_message(counter_id, text)
+        except Exception:
+            log.exception("Günlük görev bitiş bildirimi gönderilemedi (%s)", role)
 
 
 async def claim_invite(update, context) -> bool:

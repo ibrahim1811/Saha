@@ -1,7 +1,11 @@
 import hashlib
+import logging
 import random
 from datetime import date
 
+log = logging.getLogger(__name__)
+START_HOUR = 7
+END_HOUR = 23
 
 TASK_POOL = [
     {"theme": "İletişim", "task": "{name}'e bugün en az 3 kez \"seninle konuşmak iyi geliyor\" diye hissettir."},
@@ -71,5 +75,21 @@ async def select_ai(llm, today: date, role: str, name: str) -> dict | None:
         if theme and text:
             return {"theme": theme, "text": text, "status": "pending", "outcome": None}
     except Exception:
-        pass
+        log.exception("AI günlük görev seçemedi (%s, %s)", role, today)
     return None
+
+
+async def assign_day(db, llm, today: date, owner_name: str, partner_name: str) -> dict:
+    state = ensure_day(await db.get_kv("daily_tasks"), today, owner_name, partner_name)
+    day = state["days"][today.isoformat()]
+    if not day.get("ai_selected"):
+        if llm:
+            owner_task = await select_ai(llm, today, "owner", partner_name)
+            partner_task = await select_ai(llm, today, "partner", owner_name)
+            if owner_task:
+                day["owner"] = owner_task
+            if partner_task:
+                day["partner"] = partner_task
+        day["ai_selected"] = True
+    await db.set_kv("daily_tasks", state)
+    return state

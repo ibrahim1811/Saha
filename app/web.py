@@ -498,21 +498,28 @@ async def daily_tasks_handler(request):
     d = _data(request)
     p = _partner_or_404(d)
     db = d["db"]
-    today = _now(d["cfg"].tz).date()
+    now = _now(d["cfg"].tz)
+    today = now.date()
     role = request["role"]
     owner_name = "Kayra"
     partner_name = p["name"]
-    state = daily_tasks.ensure_day(await db.get_kv("daily_tasks"), today, owner_name, partner_name)
+    if now.hour < daily_tasks.START_HOUR:
+        if request.method != "GET":
+            raise ApiError(409, "Görevler 07:00'de başlayacak")
+        return _json({"today": today.isoformat(), "available": False, "task": None, "window": "07:00–23:00"})
+
+    state = await db.get_kv("daily_tasks") or {}
+    if now.hour < daily_tasks.END_HOUR:
+        state = await daily_tasks.assign_day(db, d.get("llm"), today, owner_name, partner_name)
+    elif today.isoformat() in state.get("days", {}):
+        context = SimpleNamespace(bot=_tg(request).bot, bot_data=d)
+        await bot.end_daily_tasks(context)
+        state = await db.get_kv("daily_tasks") or {}
+    else:
+        if request.method != "GET":
+            raise ApiError(409, "Bugünkü görev süresi sona erdi")
+        return _json({"today": today.isoformat(), "available": False, "task": None, "window": "07:00–23:00"})
     day = state["days"][today.isoformat()]
-    if not day.get("ai_selected") and d.get("llm"):
-        owner_ai = await daily_tasks.select_ai(d["llm"], today, "owner", partner_name)
-        partner_ai = await daily_tasks.select_ai(d["llm"], today, "partner", owner_name)
-        if owner_ai:
-            day["owner"] = owner_ai
-        if partner_ai:
-            day["partner"] = partner_ai
-        day["ai_selected"] = True
-    await db.set_kv("daily_tasks", state)
 
     if request.method == "GET":
         own = day[role]
@@ -540,6 +547,8 @@ async def daily_tasks_handler(request):
     if action not in ("complete", "fail", "penalty"):
         raise ApiError(400, "Geçersiz görev işlemi")
     own = day[role]
+    if now.hour >= daily_tasks.END_HOUR and action != "penalty":
+        raise ApiError(409, "Görev süresi 23:00'te sona erdi")
     if action == "complete":
         own["status"] = "completed"
         own["outcome"] = "Tamamlandı"
@@ -548,11 +557,10 @@ async def daily_tasks_handler(request):
         own["outcome"] = "Yapamadı"
         own["penalty_options"] = list(daily_tasks.PENALTIES)
         counter_role = "partner" if role == "owner" else "owner"
-        counter_name = partner_name if counter_role == "partner" else owner_name
         await _tg(request).bot.send_message(
             p["id"] if counter_role == "partner" else d["cfg"].owner_id,
             f"Görevini yapamadı: {own['text']}\n"
-            f"Ceza seçeneklerinden birini Sevgilim/Mesajlar panelinden seçebilirsin.",
+            f"Ceza seçeneklerinden birini Görevler sekmesinden seçebilirsin.",
         )
     else:
         target_role = str(body.get("target", ""))
