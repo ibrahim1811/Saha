@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=6">
+  <link rel="stylesheet" href="/static/app.css?v=7">
 </head>
 <body>
   <main id="app">
@@ -281,6 +281,19 @@
       <p class="foot">Kaydettiğin yazı ve GIF, ilgili butona basıldığında gönderilecek.</p>
     </section>
 
+    <section class="view" id="view-daily" data-title="Görevler" hidden>
+      <header class="love-head">
+        <p class="love-name">🎯 Günlük görev</p>
+        <p class="love-status" id="daily-status">Her güne özel, gizli görevler</p>
+      </header>
+      <h2 class="group">Bugünün görevin</h2>
+      <div class="block" id="daily-task">
+        <p class="empty">Görev yükleniyor.</p>
+      </div>
+      <h2 class="group" id="daily-counter-title">Karşı tarafın durumu</h2>
+      <div class="block" id="daily-counter"></div>
+    </section>
+
     <section class="view" id="view-me" data-title="Benim" hidden>
       <header class="love-head">
         <p class="love-name" id="me-name"></p>
@@ -328,10 +341,11 @@
     <button data-view="school"><svg viewBox="0 0 24 24"><path d="M2.5 9.5 12 5l9.5 4.5L12 14z"/><path d="M6.5 11.5V16c0 1.5 2.5 3 5.5 3s5.5-1.5 5.5-3v-4.5M21.5 9.5V15"/></svg>Okul</button>
     <button data-view="love"><svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-7.5-10.2C4.5 7 6.6 5 9 5c1.4 0 2.4.7 3 1.7.6-1 1.6-1.7 3-1.7 2.4 0 4.5 2 4.5 4.8C19.5 15.4 12 20 12 20z"/></svg><span id="tab-love">Sevgilim</span></button>
     <button data-view="messages"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>Mesajlar</button>
+    <button data-view="daily"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M9 12l2 2 4-5"/></svg>Görevler</button>
     <button data-view="settings" id="partner-settings-tab"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></svg>Ayarlar</button>
   </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

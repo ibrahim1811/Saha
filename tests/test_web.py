@@ -200,6 +200,37 @@ async def test_custom_gif_url_and_owner_kus(client):
     assert client.tg.bot.send_animation.await_args.args[1] == "https://example.com/ozel.gif"
 
 
+async def test_daily_tasks_are_separate_and_failed_task_offers_penalties(client):
+    client.tg.bot_data["partner"] = dict(PARTNER)
+
+    owner = await (await client.get("/api/daily-tasks", headers=_auth())).json()
+    assert owner["task"]["theme"] and owner["task"]["text"]
+    assert owner["partner"]["status"] == "pending"
+
+    partner = await (await client.get("/api/daily-tasks", headers=_auth(99))).json()
+    assert partner["task"]["text"]
+    assert "task" not in partner["owner"] or "text" not in partner["owner"]
+
+    failed = await client.post("/api/daily-tasks", json={"action": "fail"}, headers=_auth(99))
+    assert failed.status == 200
+    failed_data = await failed.json()
+    assert failed_data["task"]["status"] == "failed"
+    assert len(failed_data["task"]["penalty_options"]) == 3
+
+    owner = await (await client.get("/api/daily-tasks", headers=_auth())).json()
+    assert owner["partner"]["status"] == "failed"
+    assert owner["partner"]["penalty_options"]
+
+    penalized = await client.post(
+        "/api/daily-tasks",
+        json={"action": "penalty", "target": "partner", "index": 1},
+        headers=_auth(),
+    )
+    assert penalized.status == 200
+    partner = await (await client.get("/api/daily-tasks", headers=_auth(99))).json()
+    assert partner["task"]["status"] == "penalty"
+
+
 async def test_owner_partner_panel(client):
     assert (await client.get("/api/partner/self", headers=_auth())).status == 404
     client.tg.bot.username = "SahaBot"

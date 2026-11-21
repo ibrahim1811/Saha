@@ -91,7 +91,7 @@
 
   function showView(name) {
     if (state.role === "partner") {
-      name = name === "messages" ? "messages" : "me";
+      name = ["messages", "daily"].includes(name) ? name : "me";
     }
     state.view = name;
     document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== "view-" + name));
@@ -109,6 +109,7 @@
     if (name === "love") loadLove().catch(fail);
     if (name === "me") loadMe().catch(fail);
     if (name === "messages") loadLoveTemplates().catch(fail);
+    if (name === "daily") loadDailyTasks().catch(fail);
   }
 
   function skyLine(hourly) {
@@ -429,6 +430,56 @@
     toast("Mesaj ve GIF seçenekleri kaydedildi");
   }
 
+  async function loadDailyTasks() {
+    const data = await api("GET", "/api/daily-tasks");
+    renderDailyTasks(data);
+  }
+
+  function renderDailyTasks(data) {
+    const task = data.task;
+    const statusText = task.status === "completed" ? "✅ Tamamlandı" : task.status === "failed" ? "😔 Yapamadı" : task.status === "penalty" ? "🎁 Ceza seçildi" : "🎯 Bekliyor";
+    $("daily-status").textContent = `${data.today} · ${task.theme}`;
+    $("daily-task").innerHTML = `
+      <p class="love-lines">${esc(task.text)}</p>
+      <p class="foot">${statusText}</p>
+      ${task.status === "pending" ? `
+        <div class="daily-actions">
+          <button type="button" class="btn btn-primary" data-daily-action="complete">Yaptım</button>
+          <button type="button" class="btn" data-daily-action="fail">Yapamadım</button>
+        </div>` : ""}
+    `;
+
+    const counter = data.partner || data.owner;
+    if (!counter) {
+      $("daily-counter").innerHTML = '<p class="empty">Karşı tarafın görev metni gizli.</p>';
+      return;
+    }
+    let html = `<p class="love-lines">${esc(counter.name)} · ${counter.status === "completed" ? "Görevini tamamladı ✅" : counter.status === "failed" ? "Görevini yapamadı 😔" : counter.status === "penalty" ? "Cezayı kabul etti" : "Görev bekliyor 🎯"}</p>`;
+    if (counter.status === "failed" && counter.penalty_options) {
+      html += '<p class="foot">Karşı taraf için bir ceza seç:</p><div class="daily-penalties">';
+      counter.penalty_options.forEach((text, index) => {
+        html += `<button type="button" class="btn" data-daily-penalty="${index}" data-daily-target="${state.role === "owner" ? "partner" : "owner"}">${esc(text)}</button>`;
+      });
+      html += "</div>";
+    } else if (counter.penalty) {
+      html += `<p class="foot">Ceza: ${esc(counter.penalty)}</p>`;
+    }
+    $("daily-counter").innerHTML = html;
+  }
+
+  async function dailyTaskAction(action, target = null, index = null) {
+    const body = { action };
+    if (target !== null) body.target = target;
+    if (index !== null) body.index = index;
+    try {
+      const data = await api("POST", "/api/daily-tasks", body);
+      await loadDailyTasks();
+      toast(action === "complete" ? "Görev tamamlandı" : action === "fail" ? "Karşı tarafa bildirdim" : "Ceza seçildi");
+    } catch (err) {
+      fail(err);
+    }
+  }
+
   async function saveMe() {
     state.meSaved = await api("PUT", "/api/partner/self", state.meDraft);
     state.meDraft = structuredClone(state.meSaved);
@@ -666,6 +717,12 @@
 
   function bind() {
     document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+    $("view-daily").addEventListener("click", (e) => {
+      const action = e.target.closest("[data-daily-action]");
+      const penalty = e.target.closest("[data-daily-penalty]");
+      if (action) dailyTaskAction(action.dataset.dailyAction);
+      if (penalty) dailyTaskAction("penalty", penalty.dataset.dailyTarget, Number(penalty.dataset.dailyPenalty));
+    });
     $("btn-preview").addEventListener("click", preview);
     $("btn-send").addEventListener("click", sendNow);
     $("love-templates").addEventListener("input", (e) => {

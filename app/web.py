@@ -12,7 +12,7 @@ from dataclasses import asdict
 
 from datetime import date
 
-from app import bot, calendar_tr, card, examcal, gifs, love, news, partner, reminders, schedule, school, settings, tasks, weather
+from app import bot, calendar_tr, card, daily_tasks, examcal, gifs, love, news, partner, reminders, schedule, school, settings, tasks, weather
 from app.llm import LLMError
 from app.status import STARTED_AT
 from app.webauth import AuthError, verify_init_data
@@ -24,7 +24,7 @@ DERSHANE_DAYS = ("cumartesi", "pazar")
 TOMORROW_FROM_HOUR = 18
 EXAM_WINDOW_DAYS = 120
 TG_APP = web.AppKey("tg", object)
-PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action", "/api/love/templates"}
+PARTNER_PATHS = {"/api/me", "/api/partner/self", "/api/love/state", "/api/love/action", "/api/love/templates", "/api/daily-tasks"}
 PARTNER_ACTIONS = {"kus": partner.KUS, "baris": partner.BARIS, "ozledim": partner.OZLEDIM, "seviyorum": partner.SEVIYORUM, "moral": partner.MORAL}
 OWNER_ACTIONS = {"kus", "baris", "gonul", "ozledim", "seviyorum", "moral"}
 
@@ -494,6 +494,86 @@ async def love_templates(request):
     return _json({"templates": stored, "actions": actions})
 
 
+async def daily_tasks_handler(request):
+    d = _data(request)
+    p = _partner_or_404(d)
+    db = d["db"]
+    today = _now(d["cfg"].tz).date()
+    role = request["role"]
+    owner_name = "Kayra"
+    partner_name = p["name"]
+    state = daily_tasks.ensure_day(await db.get_kv("daily_tasks"), today, owner_name, partner_name)
+    day = state["days"][today.isoformat()]
+    if not day.get("ai_selected") and d.get("llm"):
+        owner_ai = await daily_tasks.select_ai(d["llm"], today, "owner", partner_name)
+        partner_ai = await daily_tasks.select_ai(d["llm"], today, "partner", owner_name)
+        if owner_ai:
+            day["owner"] = owner_ai
+        if partner_ai:
+            day["partner"] = partner_ai
+        day["ai_selected"] = True
+    await db.set_kv("daily_tasks", state)
+
+    if request.method == "GET":
+        own = day[role]
+        result = {"today": today.isoformat(), "task": own}
+        if role == "owner":
+            partner_task = day["partner"]
+            result["partner"] = {
+                "name": partner_name,
+                "status": partner_task["status"],
+                "penalty": partner_task.get("penalty"),
+                "penalty_options": partner_task.get("penalty_options"),
+            }
+        else:
+            owner_task = day["owner"]
+            result["owner"] = {
+                "name": owner_name,
+                "status": owner_task["status"],
+                "penalty": owner_task.get("penalty"),
+                "penalty_options": owner_task.get("penalty_options"),
+            }
+        return _json(result)
+
+    body = await _body(request)
+    action = str(body.get("action", ""))
+    if action not in ("complete", "fail", "penalty"):
+        raise ApiError(400, "Geçersiz görev işlemi")
+    own = day[role]
+    if action == "complete":
+        own["status"] = "completed"
+        own["outcome"] = "Tamamlandı"
+    elif action == "fail":
+        own["status"] = "failed"
+        own["outcome"] = "Yapamadı"
+        own["penalty_options"] = list(daily_tasks.PENALTIES)
+        counter_role = "partner" if role == "owner" else "owner"
+        counter_name = partner_name if counter_role == "partner" else owner_name
+        await _tg(request).bot.send_message(
+            p["id"] if counter_role == "partner" else d["cfg"].owner_id,
+            f"Görevini yapamadı: {own['text']}\n"
+            f"Ceza seçeneklerinden birini Sevgilim/Mesajlar panelinden seçebilirsin.",
+        )
+    else:
+        target_role = str(body.get("target", ""))
+        index = body.get("index")
+        if target_role not in ("owner", "partner") or target_role == role:
+            raise ApiError(400, "Ceza yalnız karşı tarafa verilebilir")
+        target = day[target_role]
+        if target["status"] != "failed":
+            raise ApiError(400, "Bu görev için ceza beklenmiyor")
+        options = target.get("penalty_options") or daily_tasks.PENALTIES
+        if not isinstance(index, int) or not 0 <= index < len(options):
+            raise ApiError(400, "Geçersiz ceza seçimi")
+        target["penalty"] = options[index]
+        target["status"] = "penalty"
+        target_id = d["cfg"].owner_id if target_role == "owner" else p["id"]
+        await _tg(request).bot.send_message(target_id, f"Cezan hazır: {target['penalty']}")
+    await db.set_kv("daily_tasks", state)
+    own = day[role]
+    return _json({"today": today.isoformat(), "task": own})
+
+
 async def post_love_action(request):
     tg, d = _tg(request), _data(request)
     _partner_or_404(d)
@@ -574,6 +654,8 @@ def build_web_app(tg_app) -> web.Application:
         web.post("/api/love/action", post_love_action),
         web.get("/api/love/templates", love_templates),
         web.put("/api/love/templates", love_templates),
+        web.get("/api/daily-tasks", daily_tasks_handler),
+        web.post("/api/daily-tasks", daily_tasks_handler),
         web.post("/api/love-notes", post_love_note),
         web.delete("/api/love-notes/{id}", _deleter("delete_love_note", "Not")),
         web.post("/api/special-days", post_special_day),
