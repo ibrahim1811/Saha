@@ -518,13 +518,20 @@
       $("daily-counter-title").hidden = true;
       return;
     }
+    const hasVerification = Array.isArray(task.verification_steps) && task.verification_steps.length > 0;
+    const progress = Number(task.progress_percent || 0);
     $("daily-counter-title").hidden = false;
-    const statusText = task.status === "completed" ? "✅ Tamamlandı" : task.status === "failed" ? "😔 Yapamadı" : task.status === "penalty" ? "🎁 Ceza seçildi" : "🎯 Bekliyor";
+    const statusText = task.status === "completed" ? "✅ Tamamlandı" : task.status === "failed" ? "😔 Yapamadı" : task.status === "penalty" ? "🎁 Ceza seçildi" : hasVerification ? "🔎 Karşı taraf ilerlemeyi doğruluyor" : "🎯 Bekliyor";
     $("daily-status").textContent = `${data.today} · ${task.theme}`;
     $("daily-task").innerHTML = `
       <p class="love-lines">${esc(task.text)}</p>
       <p class="foot">${statusText}</p>
-      ${task.status === "pending" ? `
+      ${hasVerification ? `
+        <div class="daily-progress">
+          <span>Karşı tarafın doğruladığı ilerleme: %${progress}</span>
+          <progress max="100" value="${progress}"></progress>
+        </div>` : ""}
+      ${task.status === "pending" && !hasVerification ? `
         <div class="daily-actions">
           <button type="button" class="btn btn-primary" data-daily-action="complete">Yaptım</button>
           <button type="button" class="btn" data-daily-action="fail">Yapamadım</button>
@@ -537,6 +544,21 @@
       return;
     }
     let html = `<p class="love-lines">${esc(counter.name)} · ${counter.status === "completed" ? "Görevini tamamladı ✅" : counter.status === "failed" ? "Görevini yapamadı 😔" : counter.status === "penalty" ? "Cezayı kabul etti" : "Görev bekliyor 🎯"}</p>`;
+    if (Array.isArray(counter.verification_steps) && counter.verification_steps.length) {
+      const target = state.role === "owner" ? "partner" : "owner";
+      const canVerify = data.available && ["pending", "completed"].includes(counter.status);
+      const checked = new Set(counter.verified_steps || []);
+      html += `<p class="foot">Doğrulanacak görev: ${esc(counter.text)}</p>`;
+      html += `<p class="foot">İlerleme: %${Number(counter.progress_percent || 0)}</p>`;
+      html += `<div class="daily-verification" data-daily-verify-form>`;
+      counter.verification_steps.forEach((step, index) => {
+        html += `<label><input type="checkbox" data-daily-step="${index}" ${checked.has(index) ? "checked" : ""} ${canVerify ? "" : "disabled"}><span>${esc(step)}</span></label>`;
+      });
+      if (canVerify) {
+        html += `<button type="button" class="btn btn-primary" data-daily-verify="${target}">İlerlemeyi kaydet</button>`;
+      }
+      html += "</div>";
+    }
     if (counter.status === "failed" && counter.penalty_options) {
       html += '<p class="foot">Karşı taraf için bir ceza seç:</p><div class="daily-penalties">';
       counter.penalty_options.forEach((text, index) => {
@@ -547,6 +569,18 @@
       html += `<p class="foot">Ceza: ${esc(counter.penalty)}</p>`;
     }
     $("daily-counter").innerHTML = html;
+  }
+
+  async function submitDailyVerification(target, container) {
+    const completed_steps = Array.from(container.querySelectorAll("[data-daily-step]:checked"))
+      .map((input) => Number(input.dataset.dailyStep));
+    try {
+      await api("POST", "/api/daily-tasks", { action: "verify", target, completed_steps });
+      await loadDailyTasks();
+      toast("İlerleme görev sahibine gönderildi");
+    } catch (err) {
+      fail(err);
+    }
   }
 
   async function dailyTaskAction(action, target = null, index = null) {
@@ -808,8 +842,10 @@
     $("view-daily").addEventListener("click", (e) => {
       const action = e.target.closest("[data-daily-action]");
       const penalty = e.target.closest("[data-daily-penalty]");
+      const verify = e.target.closest("[data-daily-verify]");
       if (action) dailyTaskAction(action.dataset.dailyAction);
       if (penalty) dailyTaskAction("penalty", penalty.dataset.dailyTarget, Number(penalty.dataset.dailyPenalty));
+      if (verify) submitDailyVerification(verify.dataset.dailyVerify, verify.closest("[data-daily-verify-form]"));
     });
     $("btn-preview").addEventListener("click", preview);
     $("template-preview-close").addEventListener("click", () => {

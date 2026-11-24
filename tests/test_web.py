@@ -292,8 +292,27 @@ async def test_daily_tasks_are_separate_and_failed_task_offers_penalties(client,
         headers=_auth(),
     )
     assert penalized.status == 200
+    penalty_notice = client.tg.bot.send_message.await_args.args
+    assert penalty_notice[0] == PARTNER["id"]
+    assert "Cezan bu:" in penalty_notice[1]
     partner = await (await client.get("/api/daily-tasks", headers=_auth(99))).json()
     assert partner["task"]["status"] == "penalty"
+
+
+def test_daily_task_and_penalty_pools_have_at_least_one_hundred_unique_options():
+    from app import daily_tasks as daily_tasks_mod
+
+    today = datetime(2026, 11, 22, tzinfo=TZ).date()
+    task_keys = {(task["theme"], task["task"]) for task in daily_tasks_mod.TASK_POOL}
+    penalty_options = daily_tasks_mod.select_penalties(today, "owner")
+
+    assert len(daily_tasks_mod.TASK_POOL) >= 100
+    assert len(task_keys) == len(daily_tasks_mod.TASK_POOL)
+    assert len(daily_tasks_mod.PENALTIES) >= 100
+    assert len(set(daily_tasks_mod.PENALTIES)) == len(daily_tasks_mod.PENALTIES)
+    assert len(penalty_options) == len(set(penalty_options)) == 3
+    assert penalty_options == daily_tasks_mod.select_penalties(today, "owner")
+    assert set(penalty_options) <= set(daily_tasks_mod.PENALTIES)
 
 
 async def test_daily_tasks_only_open_between_seven_and_twenty_three(client, monkeypatch):
@@ -308,6 +327,101 @@ async def test_daily_tasks_only_open_between_seven_and_twenty_three(client, monk
     monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 11, 22, 23, 0, tzinfo=tz))
     closed = await client.post("/api/daily-tasks", json={"action": "complete"}, headers=_auth())
     assert closed.status == 409
+
+
+async def test_partner_verifies_task_steps_and_owner_sees_progress(client, monkeypatch):
+    from app import web as web_mod
+
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    today = datetime(2026, 11, 22, tzinfo=TZ).date()
+    monkeypatch.setattr(web_mod, "_now", lambda tz: datetime(2026, 11, 22, 8, 0, tzinfo=tz))
+    state = web_mod.daily_tasks.ensure_day(None, today, "Kayra", PARTNER["name"])
+    day = state["days"][today.isoformat()]
+    day["ai_selected"] = True
+    day["owner"].update({
+        "verification_steps": ["İlk madde", "İkinci madde", "Üçüncü madde"],
+        "verified_steps": [],
+    })
+    await client.tg.bot_data["db"].set_kv("daily_tasks", state)
+
+    partner_view = await (await client.get("/api/daily-tasks", headers=_auth(99))).json()
+    assert partner_view["owner"]["text"] == day["owner"]["text"]
+    assert len(partner_view["owner"]["verification_steps"]) == 3
+
+    invalid = await client.post(
+        "/api/daily-tasks",
+        json={"action": "verify", "target": "owner", "completed_steps": [3]},
+        headers=_auth(99),
+    )
+    assert invalid.status == 400
+    verified = await client.post(
+        "/api/daily-tasks",
+        json={"action": "verify", "target": "owner", "completed_steps": [0, 2]},
+        headers=_auth(99),
+    )
+    assert verified.status == 200
+    assert client.tg.bot.send_message.await_args.args[0] == client.tg.bot_data["cfg"].owner_id
+    assert "%67" in client.tg.bot.send_message.await_args.args[1]
+
+    owner_view = await (await client.get("/api/daily-tasks", headers=_auth())).json()
+    assert owner_view["task"]["progress_percent"] == 67
+    assert owner_view["task"]["status"] == "pending"
+    self_complete = await client.post(
+        "/api/daily-tasks",
+        json={"action": "complete"},
+        headers=_auth(),
+    )
+    assert self_complete.status == 400
+
+    completed = await client.post(
+        "/api/daily-tasks",
+        json={"action": "verify", "target": "owner", "completed_steps": [0, 1, 2]},
+        headers=_auth(99),
+    )
+    assert completed.status == 200
+    owner_view = await (await client.get("/api/daily-tasks", headers=_auth())).json()
+    assert owner_view["task"]["progress_percent"] == 100
+    assert owner_view["task"]["status"] == "completed"
+
+
+async def test_daily_task_20h_reminder_includes_verified_progress(client, monkeypatch):
+    from app import bot as bot_mod
+    from app import daily_tasks as daily_tasks_mod
+
+    client.tg.bot_data["partner"] = dict(PARTNER)
+    today = datetime(2026, 11, 22, tzinfo=TZ).date()
+    monkeypatch.setattr(bot_mod, "_now", lambda context: datetime(2026, 11, 22, 20, 0, tzinfo=TZ))
+    state = daily_tasks_mod.ensure_day(None, today, "Kayra", PARTNER["name"])
+    day = state["days"][today.isoformat()]
+    day["owner"].update({
+        "verification_steps": ["Birinci", "İkinci", "Üçüncü", "Dördüncü"],
+        "verified_steps": [0],
+    })
+    day["partner"]["status"] = "completed"
+    await client.tg.bot_data["db"].set_kv("daily_tasks", state)
+    context = SimpleNamespace(bot=client.tg.bot, bot_data=client.tg.bot_data)
+
+    await bot_mod.remind_daily_tasks(context)
+
+    assert len(client.tg.bot.send_message.await_args_list) == 1
+    reminder = client.tg.bot.send_message.await_args.args
+    assert reminder[0] == client.tg.bot_data["cfg"].owner_id
+    assert "%25" in reminder[1]
+    assert "23:00" in reminder[1]
+
+
+def test_daily_task_schedule_includes_eight_pm_reminder(client):
+    from app import bot as bot_mod
+
+    bot_mod.schedule_daily_tasks(client.tg.job_queue, TZ)
+
+    jobs = client.tg.job_queue.run_daily.call_args_list
+    assert [call.kwargs["name"] for call in jobs] == [
+        "gunluk-gorev-baslangic",
+        "gunluk-gorev-hatirlatma",
+        "gunluk-gorev-bitir",
+    ]
+    assert jobs[1].kwargs["time"].hour == 20
 
 
 async def test_daily_task_start_sends_each_users_own_task(client, monkeypatch):

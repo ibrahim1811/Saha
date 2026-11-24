@@ -585,51 +585,87 @@ async def daily_tasks_handler(request):
     day = state["days"][today.isoformat()]
 
     if request.method == "GET":
-        own = day[role]
+        own = {**day[role], "progress_percent": daily_tasks.progress_percent(day[role])}
         result = {
             "today": today.isoformat(),
             "available": now.hour < daily_tasks.END_HOUR,
             "task": own,
             "window": "07:00–23:00",
         }
-        if role == "owner":
-            partner_task = day["partner"]
-            result["partner"] = {
-                "name": partner_name,
-                "status": partner_task["status"],
-                "penalty": partner_task.get("penalty"),
-                "penalty_options": partner_task.get("penalty_options"),
-            }
-        else:
-            owner_task = day["owner"]
-            result["owner"] = {
-                "name": owner_name,
-                "status": owner_task["status"],
-                "penalty": owner_task.get("penalty"),
-                "penalty_options": owner_task.get("penalty_options"),
-            }
+        counter_role = "partner" if role == "owner" else "owner"
+        counter_task = day[counter_role]
+        counter = {
+            "name": partner_name if counter_role == "partner" else owner_name,
+            "status": counter_task["status"],
+            "penalty": counter_task.get("penalty"),
+            "penalty_options": counter_task.get("penalty_options"),
+            "progress_percent": daily_tasks.progress_percent(counter_task),
+        }
+        if counter_task.get("verification_steps"):
+            counter.update({
+                "text": counter_task["text"],
+                "verification_steps": counter_task["verification_steps"],
+                "verified_steps": counter_task.get("verified_steps", []),
+            })
+        result[counter_role] = counter
         return _json(result)
 
     body = await _body(request)
     action = str(body.get("action", ""))
-    if action not in ("complete", "fail", "penalty"):
+    if action not in ("complete", "fail", "verify", "penalty"):
         raise ApiError(400, "Geçersiz görev işlemi")
     own = day[role]
     if now.hour >= daily_tasks.END_HOUR and action != "penalty":
         raise ApiError(409, "Görev süresi 23:00'te sona erdi")
+    if action in ("complete", "fail") and own.get("verification_steps"):
+        raise ApiError(400, "Bu görev için ilerlemeyi karşı taraf doğruluyor")
     if action == "complete":
         own["status"] = "completed"
         own["outcome"] = "Tamamlandı"
     elif action == "fail":
         own["status"] = "failed"
         own["outcome"] = "Yapamadı"
-        own["penalty_options"] = list(daily_tasks.PENALTIES)
+        own["penalty_options"] = daily_tasks.select_penalties(today, role)
         counter_role = "partner" if role == "owner" else "owner"
         await _tg(request).bot.send_message(
             p["id"] if counter_role == "partner" else d["cfg"].owner_id,
             f"Görevini yapamadı: {own['text']}\n"
             f"Ceza seçeneklerinden birini Görevler sekmesinden seçebilirsin.",
         )
+    elif action == "verify":
+        target_role = str(body.get("target", ""))
+        if target_role not in ("owner", "partner") or target_role == role:
+            raise ApiError(400, "Yalnız karşı tarafın doğrulanabilir görevini güncelleyebilirsin")
+        target = day[target_role]
+        verification_steps = target.get("verification_steps")
+        completed_steps = body.get("completed_steps")
+        if not verification_steps or target["status"] not in ("pending", "completed"):
+            raise ApiError(400, "Bu görev için ilerleme doğrulaması kullanılamıyor")
+        if not isinstance(completed_steps, list) or any(
+            type(index) is not int or not 0 <= index < len(verification_steps)
+            for index in completed_steps
+        ):
+            raise ApiError(400, "Geçersiz görev adımı")
+        completed_steps = sorted(set(completed_steps))
+        target["verified_steps"] = completed_steps
+        percent = daily_tasks.progress_percent(target)
+        if percent == 100:
+            target["status"] = "completed"
+            target["outcome"] = "Karşı taraf tamamlandığını doğruladı"
+        else:
+            target["status"] = "pending"
+            target["outcome"] = None
+        await db.set_kv("daily_tasks", state)
+        target_id = d["cfg"].owner_id if target_role == "owner" else p["id"]
+        try:
+            await _tg(request).bot.send_message(
+                target_id,
+                f"Karşı taraf günlük görevindeki ilerlemeyi güncelledi: "
+                f"%{percent} ({len(completed_steps)}/{len(verification_steps)} madde).",
+            )
+        except TelegramError:
+            log.exception("Günlük görev ilerleme bildirimi gönderilemedi (%s)", target_role)
+        return _json({"today": today.isoformat(), "task": own})
     else:
         target_role = str(body.get("target", ""))
         index = body.get("index")
@@ -644,7 +680,10 @@ async def daily_tasks_handler(request):
         target["penalty"] = options[index]
         target["status"] = "penalty"
         target_id = d["cfg"].owner_id if target_role == "owner" else p["id"]
-        await _tg(request).bot.send_message(target_id, f"Cezan hazır: {target['penalty']}")
+        await _tg(request).bot.send_message(
+            target_id,
+            f"Karşı taraf cezanı seçti. Cezan bu: {target['penalty']}",
+        )
     await db.set_kv("daily_tasks", state)
     own = day[role]
     return _json({"today": today.isoformat(), "task": own})

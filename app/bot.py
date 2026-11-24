@@ -526,13 +526,18 @@ def schedule_special_days(job_queue, tz: ZoneInfo) -> None:
 
 
 def schedule_daily_tasks(job_queue, tz: ZoneInfo) -> None:
-    for name in ("gunluk-gorev-baslangic", "gunluk-gorev-bitir"):
+    for name in ("gunluk-gorev-baslangic", "gunluk-gorev-hatirlatma", "gunluk-gorev-bitir"):
         for job in job_queue.get_jobs_by_name(name):
             job.schedule_removal()
     job_queue.run_daily(
         send_daily_tasks,
         time=time(daily_tasks.START_HOUR, 0, tzinfo=tz),
         name="gunluk-gorev-baslangic",
+    )
+    job_queue.run_daily(
+        remind_daily_tasks,
+        time=time(20, 0, tzinfo=tz),
+        name="gunluk-gorev-hatirlatma",
     )
     job_queue.run_daily(
         end_daily_tasks,
@@ -558,6 +563,37 @@ async def send_daily_tasks(context) -> None:
             log.exception("Günlük görev gönderilemedi (%s)", role)
 
 
+async def remind_daily_tasks(context) -> None:
+    d = _deps(context)
+    p = d.get("partner")
+    if not p:
+        return
+    today = _now(context).date()
+    state = await d["db"].get_kv("daily_tasks") or {}
+    day = state.get("days", {}).get(today.isoformat())
+    if not day:
+        return
+
+    for role, chat_id in (("owner", d["cfg"].owner_id), ("partner", p["id"])):
+        task = day.get(role)
+        if not task or task["status"] != "pending":
+            continue
+        progress = (
+            f"Karşı tarafın doğruladığı ilerleme: %{daily_tasks.progress_percent(task)}."
+            if task.get("verification_steps")
+            else "Görevin henüz tamamlandı olarak işaretlenmedi."
+        )
+        text = (
+            f"⏰ Günlük görevin: {task['text']}\n\n"
+            f"{progress} "
+            "23:00'e kadar devam etmeyi unutma."
+        )
+        try:
+            await context.bot.send_message(chat_id, text)
+        except Exception:
+            log.exception("Günlük görev hatırlatması gönderilemedi (%s)", role)
+
+
 async def end_daily_tasks(context) -> None:
     d = _deps(context)
     p = d.get("partner")
@@ -575,7 +611,7 @@ async def end_daily_tasks(context) -> None:
         if task and task["status"] == "pending":
             task["status"] = "failed"
             task["outcome"] = "23:00'e kadar tamamlanmadı"
-            task["penalty_options"] = list(daily_tasks.PENALTIES)
+            task["penalty_options"] = daily_tasks.select_penalties(today, role)
             failed.append((role, task))
     if not failed:
         return
