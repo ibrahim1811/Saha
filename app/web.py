@@ -586,7 +586,12 @@ async def daily_tasks_handler(request):
 
     if request.method == "GET":
         own = day[role]
-        result = {"today": today.isoformat(), "task": own}
+        result = {
+            "today": today.isoformat(),
+            "available": now.hour < daily_tasks.END_HOUR,
+            "task": own,
+            "window": "07:00–23:00",
+        }
         if role == "owner":
             partner_task = day["partner"]
             result["partner"] = {

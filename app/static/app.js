@@ -511,7 +511,7 @@
 
   function renderDailyTasks(data) {
     const task = data.task;
-    if (!data.available || !task) {
+    if (!task) {
       $("daily-status").textContent = "Görev saati 07:00–23:00";
       $("daily-task").innerHTML = '<p class="empty">Günlük görevler 07:00’de başlar ve 23:00’te sona erer.</p>';
       $("daily-counter").innerHTML = "";
